@@ -35,7 +35,8 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 STATE_BUCKET="devops-assessment-tfstate-${ACCOUNT_ID}-${AWS_REGION}"
 PUBLIC_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '\n')
 ALLOWED_CIDR=${ALLOWED_CIDR:-"${PUBLIC_IP}/32"}
-IMAGE="ghcr.io/${REPOSITORY,,}:sha-${COMMIT_SHA}"
+REPOSITORY_LOWER=$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')
+IMAGE="ghcr.io/${REPOSITORY_LOWER}:sha-${COMMIT_SHA}"
 
 printf 'AWS account: %s\nRegion: %s\nGitHub repo: %s\nEnvironment: %s\nImage: %s\nHTTP allowlist: %s\n' "$ACCOUNT_ID" "$AWS_REGION" "$REPOSITORY" "$ENVIRONMENT" "$IMAGE" "$ALLOWED_CIDR"
 echo "Enter a read:packages token for ${GHCR_USER}; it will be stored as an encrypted SSM SecureString."

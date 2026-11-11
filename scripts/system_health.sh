@@ -54,9 +54,10 @@ while (($#)); do
 done
 
 for threshold in "$DISK" "$CPU" "$MEM"; do
-    [[ "$threshold" =~ ^[0-9]+$ ]] &&
-        ((10#$threshold <= 100)) ||
-        error "Thresholds must be integers from 0 to 100"
+  if [[ ! $threshold =~ ^[0-9]+$ ]] || ((threshold > 100)); then
+    echo "Thresholds must be integers from 0 to 100" >&2
+    exit 2
+  fi
 done
 
 for cmd in awk df ps date tee wc mv mkdir; do

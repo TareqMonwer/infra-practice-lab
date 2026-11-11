@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.13-alpine-dev AS build
+FROM dhi.io/python:3.13-alpine-dev AS build
 WORKDIR /build
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
-FROM python:3.13-alpine-dev
+FROM dhi.io/python:3.13-alpine-dev
 ARG VERSION=1.0.0
 LABEL org.opencontainers.image.title="devops-assessment" org.opencontainers.image.version="$VERSION" org.opencontainers.image.source="https://github.com/example/devops-assessment"
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PORT=8000

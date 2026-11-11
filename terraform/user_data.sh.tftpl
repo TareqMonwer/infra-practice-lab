@@ -3,6 +3,8 @@ set -euxo pipefail
 dnf update -y
 dnf install -y docker amazon-cloudwatch-agent awscli-2 curl
 systemctl enable --now docker
+# Ensure the EC2 host registers as an SSM managed node before GitHub Actions deploys to it.
+systemctl enable --now amazon-ssm-agent
 mkdir -p /opt/devops
 cat >/opt/devops/deploy.sh <<'SCRIPT'
 #!/bin/bash

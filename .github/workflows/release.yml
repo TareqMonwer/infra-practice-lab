@@ -62,10 +62,42 @@ jobs:
           IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
           GHCR_USER: ${{ vars.GHCR_USERNAME }}
         run: |
-          command_id=$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript --parameters commands="['/opt/devops/deploy.sh $IMAGE $GHCR_USER']" --query 'Command.CommandId' --output text)
+          echo "Waiting for EC2 instance $INSTANCE_ID to register with Systems Manager in $AWS_REGION..."
           for _ in $(seq 1 30); do
-            state=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || true)
-            case "$state" in Success) exit 0;; Failed|Cancelled|TimedOut) aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID"; exit 1;; esac
+            ping_status=$(aws ssm describe-instance-information \
+              --region "$AWS_REGION" \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text)
+            if [[ "$ping_status" == Online ]]; then break; fi
             sleep 10
           done
-          echo 'SSM deployment timed out'; exit 1
+          if [[ "$ping_status" != Online ]]; then
+            echo "Instance did not become an online SSM managed node (last status: $ping_status). Check that amazon-ssm-agent is running and the instance can reach the regional SSM endpoints over HTTPS."
+            exit 1
+          fi
+          command_id=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --parameters "commands=['/opt/devops/deploy.sh $IMAGE $GHCR_USER']" \
+            --query 'Command.CommandId' \
+            --output text)
+          echo "SSM command ID: $command_id"
+          for _ in $(seq 1 30); do
+            state=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || true)
+            case "$state" in
+              Success)
+                aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query '{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent}' --output json
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|DeliveryTimedOut|Undeliverable|Terminated)
+                aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --output json
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "SSM command $command_id did not finish within five minutes."
+          aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --output json || true
+          exit 1

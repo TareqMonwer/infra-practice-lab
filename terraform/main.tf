@@ -26,7 +26,7 @@ data "aws_ami" "al2023" {
 
 resource "aws_security_group" "app" {
   name_prefix = "${var.environment}-app-"
-  description = "HTTP from the caller's approved CIDR; outbound for SSM, GHCR, and package access"
+  description = "Application HTTP ingress; outbound access for SSM and image pulls"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {

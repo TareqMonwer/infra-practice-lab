@@ -133,3 +133,4 @@ AI assistance was used to draft and assemble the initial implementation and docu
 - monitoring setup didn't work as app service was in another network.
 - grafana panels didn't show data as prometheus setup wasn't complete with alloy integration.
 - github ci failed due to `ruff` linting. Fixed by: `ruff check --fix` command.
+- ci failed due to `runshellcheck` bcz `system_health.sh` had empty line just before the shebang. removing it is the fix.

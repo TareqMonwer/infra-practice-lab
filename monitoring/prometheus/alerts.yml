@@ -1,0 +1,23 @@
+groups:
+- name: service-alerts
+  rules:
+  - alert: AppInstanceDown
+    expr: up{job="app"} == 0
+    for: 2m
+    labels: {severity: critical}
+    annotations: {summary: "Application scrape target is down"}
+  - alert: HighErrorRate
+    expr: sum(rate(http_errors_total[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 0.001) > 0.05
+    for: 5m
+    labels: {severity: warning}
+    annotations: {summary: "Application error ratio exceeds 5%"}
+  - alert: HostDiskUsageHigh
+    expr: 100 * (1 - node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"}) > 80
+    for: 10m
+    labels: {severity: warning}
+    annotations: {summary: "Host filesystem usage exceeds 80%"}
+  - alert: ContainerMemoryNearLimit
+    expr: container_memory_working_set_bytes{name!=""} / clamp_min(container_spec_memory_limit_bytes{name!=""}, 1) > 0.9
+    for: 5m
+    labels: {severity: warning}
+    annotations: {summary: "Container memory exceeds 90% of limit"}

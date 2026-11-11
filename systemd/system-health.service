@@ -1,0 +1,5 @@
+[Unit]
+Description=System health snapshot
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/system_health.sh

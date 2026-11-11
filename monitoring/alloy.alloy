@@ -1,0 +1,18 @@
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+loki.source.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.docker.containers.targets
+  forward_to = [loki.process.app.receiver]
+  labels = {job = "docker"}
+}
+loki.process "app" {
+  stage.json { expressions = { level = "level", path = "path", environment = "environment" } }
+  stage.labels { values = { level = "", path = "" } }
+  stage.label_keep { values = ["job", "level", "path", "container", "compose_service"] }
+  forward_to = [loki.write.local.receiver]
+}
+loki.write "local" {
+  endpoint { url = "http://loki:3100/loki/api/v1/push" }
+}

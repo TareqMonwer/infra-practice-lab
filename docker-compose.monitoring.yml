@@ -1,0 +1,48 @@
+services:
+  app:
+    build: .
+    image: devops-assessment:local
+    ports: ["8080:8000"]
+    environment: {PORT: "8000", LOG_LEVEL: "INFO", ENVIRONMENT: "local"}
+    labels: {logging: "promtail"}
+    restart: unless-stopped
+    healthcheck: {test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"], interval: 30s, timeout: 3s, retries: 3}
+    networks: [internal]
+    mem_limit: 256m
+    cpus: 0.5
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d", "--web.enable-lifecycle"]
+    volumes: ["./monitoring/prometheus:/etc/prometheus:ro", "prometheus-data:/prometheus"]
+    networks: [internal]
+    depends_on: [app, node-exporter, cadvisor]
+  loki:
+    image: grafana/loki:3.3.2
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes: ["./monitoring/loki.yml:/etc/loki/local-config.yaml:ro", "loki-data:/loki"]
+    networks: [internal]
+  alloy:
+    image: grafana/alloy:v1.5.1
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
+    volumes: ["./monitoring/alloy.alloy:/etc/alloy/config.alloy:ro", "/var/run/docker.sock:/var/run/docker.sock:ro", "alloy-data:/var/lib/alloy/data"]
+    networks: [internal]
+    depends_on: [loki]
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    command: ["--path.rootfs=/host", "--path.procfs=/host/proc", "--path.sysfs=/host/sys", "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"]
+    volumes: ["/:/host:ro,rslave", "/proc:/host/proc:ro", "/sys:/host/sys:ro"]
+    networks: [internal]
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.51.0
+    privileged: true
+    volumes: ["/:/rootfs:ro", "/var/run:/var/run:ro", "/sys:/sys:ro", "/var/lib/docker:/var/lib/docker:ro", "/dev/disk:/dev/disk:ro"]
+    networks: [internal]
+  grafana:
+    image: grafana/grafana:11.4.0
+    ports: ["3000:3000"]
+    environment: {GF_SECURITY_ADMIN_USER: "${GRAFANA_USER:-admin}", GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD in .env}"}
+    volumes: ["./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro", "./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro", "grafana-data:/var/lib/grafana"]
+    networks: [internal]
+    depends_on: [prometheus, loki]
+networks: {internal: {internal: true}}
+volumes: {prometheus-data: {}, loki-data: {}, grafana-data: {}, alloy-data: {}}

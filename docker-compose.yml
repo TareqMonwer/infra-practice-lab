@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    image: devops-assessment:local
+    ports: ["8080:8000"]
+    environment: {PORT: "8000", LOG_LEVEL: "INFO", ENVIRONMENT: "local", APP_VERSION: "1.0.0"}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    mem_limit: 256m
+    cpus: 0.5

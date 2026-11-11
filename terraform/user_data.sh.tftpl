@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 dnf update -y
-dnf install -y docker amazon-cloudwatch-agent awscli2 curl
+dnf install -y docker amazon-cloudwatch-agent awscli-2 curl
 systemctl enable --now docker
 mkdir -p /opt/devops
 cat >/opt/devops/deploy.sh <<'SCRIPT'
@@ -27,7 +27,7 @@ cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'JSON'
 {"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/lib/docker/containers/*/*.log","log_group_name":"${log_group}","log_stream_name":"{instance_id}/{container_id}","retention_in_days":14}]}}}}
 JSON
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
-aws ssm get-parameter --name /devops/ghcr-read-token --with-decryption --query Parameter.Value --output text | docker login ghcr.io -u "github" --password-stdin
+aws ssm get-parameter --name /devops/ghcr-read-token --with-decryption --query Parameter.Value --output text | docker login ghcr.io -u "${ghcr_username}" --password-stdin
 # shellcheck disable=SC2154 # Terraform substitutes this template variable.
 docker pull "${image}"
 # shellcheck disable=SC2154 # Terraform substitutes these template variables.

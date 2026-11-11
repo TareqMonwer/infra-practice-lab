@@ -136,3 +136,19 @@ AI assistance was used to draft and assemble the initial implementation and docu
 - ci failed due to `runshellcheck` bcz `system_health.sh` had empty line just before the shebang. removing it is the fix.
 - ci failure for shellcheck caused by terraform template variables and unfamiliar `if` semantics used in `system_health.sh`. fixed by adding immune comments in .tf and proper `if` semantics in shell script.
 - security check ci failed as critical issue found in: `"alpine" version="3.21.2"` of python docker image. Fixed by using image: `python:3.13-alpine-dev` in Dockerfile.
+
+**After running `aws-up.sh` setup github action variables:
+```
+export AWS_REGION=us-east-1
+
+gh variable set AWS_ROLE_ARN \
+  --body "$(terraform -chdir=terraform output -raw github_actions_role_arn)"
+gh variable set AWS_REGION --body "$AWS_REGION"
+gh variable set DEPLOY_INSTANCE_ID \
+  --body "$(terraform -chdir=terraform output -raw instance_id)"
+gh variable set GHCR_USERNAME \
+  --body "$(gh api user --jq .login)"
+
+gh variable list
+```
+

@@ -13,7 +13,7 @@ jobs:
       - run: coverage run -m pytest && coverage report
       - uses: hadolint/hadolint-action@v3.1.0
         with: {dockerfile: Dockerfile}
-      - uses: koalaman/shellcheck: v0.10.0
+      - uses: bewuethr/shellcheck-action@v2.3.0
         with: {args: 'scripts/system_health.sh'}
       - uses: docker/build-push-action@v6
         with: {context: ., tags: devops-assessment:ci, load: true}

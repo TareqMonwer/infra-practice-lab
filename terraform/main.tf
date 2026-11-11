@@ -47,7 +47,7 @@ resource "aws_security_group" "app" {
 resource "aws_iam_role" "instance" {
   name = "${var.environment}-devops-instance"
   assume_role_policy = jsonencode({
-    Version = "2012-10-17",
+    Version   = "2012-10-17",
     Statement = [{ Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" }, Action = "sts:AssumeRole" }]
   })
 }
@@ -62,7 +62,7 @@ resource "aws_cloudwatch_log_group" "app" {
 resource "aws_iam_role_policy" "logs" {
   role = aws_iam_role.instance.id
   policy = jsonencode({
-    Version = "2012-10-17",
+    Version   = "2012-10-17",
     Statement = [{ Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.app.arn}:*" }]
   })
 }
@@ -86,14 +86,19 @@ resource "aws_instance" "app" {
   vpc_security_group_ids      = [aws_security_group.app.id]
   iam_instance_profile        = aws_iam_instance_profile.app.name
   associate_public_ip_address = true
+  user_data_replace_on_change = true
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    log_group = aws_cloudwatch_log_group.app.name
-    image     = var.image
-    environment = var.environment
-    aws_region  = var.aws_region
+    log_group     = aws_cloudwatch_log_group.app.name
+    image         = var.image
+    environment   = var.environment
+    aws_region    = var.aws_region
     ghcr_username = var.ghcr_username
   })
   tags = { Name = "${var.environment}-devops-assessment", App = "devops-assessment", Environment = var.environment }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_role" "github_actions" {
@@ -122,12 +127,12 @@ resource "aws_iam_role_policy" "github_deploy" {
         Resource = "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript"
       },
       {
-        Effect   = "Allow",
-        Action   = ["ssm:SendCommand"],
-        Resource = "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/*",
+        Effect    = "Allow",
+        Action    = ["ssm:SendCommand"],
+        Resource  = "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/*",
         Condition = { StringEquals = { "ssm:resourceTag/App" = "devops-assessment" } }
       },
-      { Effect = "Allow", Action = ["ssm:GetCommandInvocation"], Resource = "*" }
+      { Effect = "Allow", Action = ["ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation"], Resource = "*" }
     ]
   })
 }

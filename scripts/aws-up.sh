@@ -26,8 +26,9 @@ if [[ -n $(git status --porcelain) ]]; then
   exit 2
 fi
 COMMIT_SHA=$(git rev-parse HEAD)
-if ! gh run list --workflow release.yml --branch main --limit 30 --json headSha,conclusion --jq "any(.[]; .headSha == \"${COMMIT_SHA}\" and .conclusion == \"success\")" | grep -qx true; then
-  echo "The Release and deploy workflow for this main commit has not succeeded. Wait for its publish job before continuing." >&2
+RELEASE_RUN_ID=$(gh run list --workflow release.yml --branch main --limit 30 --json databaseId,headSha --jq ".[] | select(.headSha == \"${COMMIT_SHA}\") | .databaseId" | head -n 1)
+if [[ -z $RELEASE_RUN_ID ]] || ! gh run view "$RELEASE_RUN_ID" --json jobs --jq '.jobs[] | select(.name == "publish") | .conclusion' | grep -qx success; then
+  echo "The publish job for this main commit has not succeeded. Wait for the image build before provisioning." >&2
   exit 2
 fi
 

@@ -127,3 +127,9 @@ Add SLSA provenance, Cosign signing and SBOM upload, a real staging gate and app
 ## AI use
 
 AI assistance was used to draft and assemble the initial implementation and documentation.
+
+
+# Issues faced and fixed:
+- monitoring setup didn't work as app service was in another network.
+- grafana panels didn't show data as prometheus setup wasn't complete with alloy integration.
+- github ci failed due to `ruff` linting. Fixed by: `ruff check --fix` command.

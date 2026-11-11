@@ -1,7 +1,12 @@
-import json, logging, os, signal, sys, time
+import json
+import logging
+import os
+import sys
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+
+from fastapi import FastAPI, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from starlette.middleware.base import BaseHTTPMiddleware
 
 VERSION = os.getenv("APP_VERSION", "1.0.0")

@@ -7,3 +7,4 @@ health_log.txt
 terraform/.terraform/
 terraform/terraform.tfstate*
 terraform/backend.hcl
+.DS_Store

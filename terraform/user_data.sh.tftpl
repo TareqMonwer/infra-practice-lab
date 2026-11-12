@@ -30,6 +30,7 @@ if ! curl -fsS http://127.0.0.1/health >/dev/null; then
 fi
 SCRIPT
 # Bake the Terraform-provided values into the script (the heredoc is quoted on purpose).
+# shellcheck disable=SC2154 # Terraform substitutes these template variables.
 sed -i "s|@AWS_REGION@|${aws_region}|g; s|@ENVIRONMENT@|${environment}|g" /opt/devops/deploy.sh
 chmod 700 /opt/devops/deploy.sh
 # 3) Base packages. curl is intentionally absent: AL2023 ships curl-minimal, which

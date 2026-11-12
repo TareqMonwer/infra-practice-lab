@@ -62,19 +62,19 @@ Terraform's EC2 instance role grants SSM managed-instance access and CloudWatch 
 
 ## Terraform
 
-Remote state must be bootstrapped before Terraform init: create a unique S3 bucket with versioning and encryption, then use `-backend-config=backend.example.hcl` after replacing its bucket. Terraform S3 native lockfiles (`use_lockfile = true`) provide state locking. Keep state access restricted to the operator role.
+`scripts/aws-up.sh` bootstraps the encrypted, versioned S3 state bucket and GitHub OIDC provider, then plans and applies the app stack. It configures the web endpoint publicly by default, restricts SSH to the Mac's current public IP, generates a local SSH key under `~/.ssh`, and configures Session Manager for browser or CLI shell access. For a private web endpoint, set `WEB_ALLOWED_CIDR` before running it. Terraform S3 native lockfiles (`use_lockfile = true`) provide state locking. Keep state access restricted to the operator role.
 
 ```sh
-cd terraform
-cp backend.example.hcl backend.hcl  # edit bucket name
-terraform init -backend-config=backend.hcl
-terraform plan -var='environment=staging' -var='allowed_cidrs=["YOUR_IP/32"]' -var='image=ghcr.io/OWNER/REPO:TAG'
-terraform apply -var='environment=staging' -var='allowed_cidrs=["YOUR_IP/32"]' -var='image=ghcr.io/OWNER/REPO:TAG'
-# After collecting requested evidence:
-terraform destroy -var='environment=staging' -var='allowed_cidrs=["YOUR_IP/32"]' -var='image=ghcr.io/OWNER/REPO:TAG'
+./scripts/aws-up.sh
+# Optional public HTTPS: set DOMAIN_NAME to a DNS name whose A record points to the Terraform public_ip output.
+DOMAIN_NAME=app.example.com ./scripts/aws-up.sh
+# Optional: limit HTTP/HTTPS to your own IP instead of making the app public.
+WEB_ALLOWED_CIDR="$(curl -fsS https://checkip.amazonaws.com)/32" ./scripts/aws-up.sh
+# After collecting requested evidence, remove the stack:
+./scripts/aws-down.sh
 ```
 
-Use `environment=production` for the second environment, with separate backend keys/state and a tighter ingress CIDR. The example opens HTTP only to configured CIDRs; SSM is used for administration instead of SSH. CloudWatch retention is 14 days. Production cost depends on region and traffic; a continuously running t3.micro is typically about $7–10/month compute, plus a public IPv4 address (about $3.65/month), 8 GiB gp3 storage (~$0.65/month), logs/egress, and state storage. Budget roughly $15–25/month before substantial traffic, and verify current regional pricing before provisioning.
+When `DOMAIN_NAME` is set, Caddy terminates TLS and redirects HTTP to HTTPS; DNS must resolve to the instance public IP for ACME certificate issuance. Without a domain, the stack serves HTTP and does not expose port 443. SSH uses a generated Ed25519 key at `~/.ssh/devops-assessment-staging` and only allows the provisioning Mac's public IPv4 `/32`; set `SSH_ALLOWED_CIDR` to update that source. SSM Session Manager remains available without inbound port 22 and is the preferred browser/CLI shell. Terraform outputs the instance ID, URLs, SSM command, SSH command, and a least-privilege operator Session Manager policy ARN. Attach that policy to the human IAM role/user once to enable interactive sessions; then use the Session Manager page in the AWS console or the output `aws ssm start-session` command in a terminal. CloudWatch retains application, user-data/cloud-init, and SSM-agent logs for 14 days. The instance requires IMDSv2 and has an encrypted gp3 root volume. A continuously running t3.micro, public IPv4 address, optional HTTPS proxy, logs/egress, and state storage incur AWS charges; check current regional pricing before provisioning. For production, place EC2 in private subnets behind an ALB with ACM-managed TLS rather than exposing the instance and proxy directly.
 
 ## Kubernetes
 

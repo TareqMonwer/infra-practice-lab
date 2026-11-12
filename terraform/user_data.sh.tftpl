@@ -1,53 +1,67 @@
 #!/bin/bash
 set -euxo pipefail
-# 1) Register with SSM first so the release pipeline can reach this host as early
-#    as possible (the deploy job polls for an online managed node before deploying).
+exec > >(tee -a /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+# Register with SSM before slower Docker and CloudWatch setup.
 dnf install -y amazon-ssm-agent
 systemctl enable --now amazon-ssm-agent
-# 2) Create the deploy script before the slow package work so a deploy command can
-#    never race bootstrap: it waits for Docker/AWS CLI to appear (see the loop below).
+
 mkdir -p /opt/devops
-cat >/opt/devops/deploy.sh <<'SCRIPT'
-#!/bin/bash
-set -euo pipefail
-new="$1"; user="$2"
-# Wait for cloud-init to finish installing Docker and the AWS CLI on first boot.
-for _ in $(seq 1 36); do
-  if command -v docker >/dev/null && command -v aws >/dev/null && systemctl is-active --quiet docker; then break; fi
-  sleep 5
-done
-command -v docker >/dev/null || { echo "docker is not installed yet; bootstrap has not finished" >&2; exit 1; }
-old=$(docker inspect --format '{{.Config.Image}}' devops-app 2>/dev/null || true)
-aws ssm get-parameter --region @AWS_REGION@ --name /devops/ghcr-read-token --with-decryption --query Parameter.Value --output text | docker login ghcr.io -u "$user" --password-stdin
-docker pull "$new"
-docker rm -f devops-app 2>/dev/null || true
-docker run -d --name devops-app --restart unless-stopped -p 80:8000 -e ENVIRONMENT=@ENVIRONMENT@ "$new"
-sleep 8
-if ! curl -fsS http://127.0.0.1/health >/dev/null; then
- docker rm -f devops-app || true
- if [ -n "$old" ]; then docker run -d --name devops-app --restart unless-stopped -p 80:8000 -e ENVIRONMENT=@ENVIRONMENT@ "$old"; fi
- exit 1
+DOMAIN_NAME='${domain_name}'
+if [[ -n "$DOMAIN_NAME" ]]; then
+  docker network create devops || true
+  cat >/opt/devops/Caddyfile <<CADDY
+$DOMAIN_NAME {
+  reverse_proxy devops-app:8000
+}
+CADDY
 fi
+
+# Create the deploy script early; it waits while first-boot package setup finishes.
+cat >/opt/devops/deploy.sh <<'SCRIPT'
+${deploy_script}
 SCRIPT
-# Bake the Terraform-provided values into the script (the heredoc is quoted on purpose).
 # shellcheck disable=SC2154 # Terraform substitutes these template variables.
-sed -i "s|@AWS_REGION@|${aws_region}|g; s|@ENVIRONMENT@|${environment}|g" /opt/devops/deploy.sh
+
+sed -i "s|@AWS_REGION@|${aws_region}|g; s|@ENVIRONMENT@|${environment}|g; s|@DOMAIN_NAME@|${domain_name}|g" /opt/devops/deploy.sh
 chmod 700 /opt/devops/deploy.sh
-# 3) Base packages. curl is intentionally absent: AL2023 ships curl-minimal, which
-#    provides `curl`, and installing the full `curl` package conflicts with it.
+
+# AL2023's curl-minimal already provides curl; installing curl conflicts with it.
 dnf update -y
 dnf install -y docker amazon-cloudwatch-agent awscli-2
 systemctl enable --now docker
-# 4) Ship container logs to CloudWatch Logs (best effort; failure must not block the app).
-# shellcheck disable=SC2154 # Terraform substitutes this template variable.
+aws configure set region '${aws_region}'
+
+if [[ -n "$DOMAIN_NAME" ]]; then
+  docker network create devops 2>/dev/null || true
+  docker run -d --name devops-proxy --restart unless-stopped --network devops \
+    -p 80:80 -p 443:443 -v /opt/devops/Caddyfile:/etc/caddy/Caddyfile:ro \
+    -v caddy_data:/data -v caddy_config:/config caddy:2-alpine
+fi
+
 cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'JSON'
-{"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/lib/docker/containers/*/*.log","log_group_name":"${log_group}","log_stream_name":"{instance_id}/{container_id}","retention_in_days":14}]}}}}
+{"logs":{"logs_collected":{"files":{"collect_list":[
+  {"file_path":"/var/log/cloud-init-output.log","log_group_name":"${log_group}","log_stream_name":"{instance_id}/cloud-init"},
+  {"file_path":"/var/log/user-data.log","log_group_name":"${log_group}","log_stream_name":"{instance_id}/user-data"},
+  {"file_path":"/var/log/amazon/ssm/amazon-ssm-agent.log","log_group_name":"${log_group}","log_stream_name":"{instance_id}/ssm-agent"},
+  {"file_path":"/var/lib/docker/containers/*/*.log","log_group_name":"${log_group}","log_stream_name":"{instance_id}/{container_id}"}
+]}}}}
 JSON
-/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s || echo "cloudwatch agent bootstrap failed (continuing)"
-# 5) Initial container (best effort: the release workflow is the source of truth and
-#    will deploy the newest image right after provisioning).
-# shellcheck disable=SC2154 # Terraform substitutes this template variable.
-aws ssm get-parameter --region "${aws_region}" --name /devops/ghcr-read-token --with-decryption --query Parameter.Value --output text | docker login ghcr.io -u "${ghcr_username}" --password-stdin \
-  && docker pull "${image}" \
-  && docker run -d --name devops-app --restart unless-stopped -p 80:8000 -e ENVIRONMENT="${environment}" "${image}" \
-  || echo "initial container was not started; the release workflow will deploy it"
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s \
+  || echo "CloudWatch agent bootstrap failed; continuing"
+
+# Best-effort initial launch. The release workflow is the source of truth.
+aws ssm get-parameter --region '${aws_region}' --name /devops/ghcr-read-token \
+  --with-decryption --query Parameter.Value --output text \
+  | docker login ghcr.io -u '${ghcr_username}' --password-stdin \
+  && docker pull '${image}' \
+  && if [[ -n "$DOMAIN_NAME" ]]; then
+       docker run -d --name devops-app --restart unless-stopped --network devops \
+         -e PORT=8000 -e ENVIRONMENT='${environment}' '${image}'
+     else
+       docker run -d --name devops-app --restart unless-stopped -p 80:8000 \
+         -e PORT=8000 -e ENVIRONMENT='${environment}' '${image}'
+     fi \
+  || echo "Initial container did not start; the release workflow will deploy it"

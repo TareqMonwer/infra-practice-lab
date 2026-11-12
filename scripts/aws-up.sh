@@ -11,6 +11,7 @@ command -v aws >/dev/null || { echo "Install AWS CLI v2 first." >&2; exit 2; }
 command -v terraform >/dev/null || { echo "Install Terraform 1.10 or newer first." >&2; exit 2; }
 command -v gh >/dev/null || { echo "Install and authenticate GitHub CLI (gh) first." >&2; exit 2; }
 command -v curl >/dev/null || { echo "curl is required to determine your public IP." >&2; exit 2; }
+command -v ssh-keygen >/dev/null || { echo "ssh-keygen is required for the optional, IP-restricted SSH key." >&2; exit 2; }
 aws sts get-caller-identity >/dev/null
 gh auth status >/dev/null
 
@@ -35,11 +36,20 @@ fi
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 STATE_BUCKET="devops-assessment-tfstate-${ACCOUNT_ID}-${AWS_REGION}"
 PUBLIC_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '\n')
-ALLOWED_CIDR=${ALLOWED_CIDR:-"${PUBLIC_IP}/32"}
+WEB_ALLOWED_CIDR=${WEB_ALLOWED_CIDR:-"0.0.0.0/0"}
+SSH_ALLOWED_CIDR=${SSH_ALLOWED_CIDR:-"${PUBLIC_IP}/32"}
+DOMAIN_NAME=${DOMAIN_NAME:-}
+SSH_PUBLIC_KEY_PATH="${HOME}/.ssh/devops-assessment-${ENVIRONMENT}.pub"
+mkdir -p "${HOME}/.ssh"
+chmod 700 "${HOME}/.ssh"
+if [[ ! -f ${SSH_PUBLIC_KEY_PATH} ]]; then
+  ssh-keygen -q -t ed25519 -N '' -C "devops-assessment-${ENVIRONMENT}" -f "${SSH_PUBLIC_KEY_PATH%.pub}"
+  chmod 600 "${SSH_PUBLIC_KEY_PATH%.pub}"
+fi
 REPOSITORY_LOWER=$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')
 IMAGE="ghcr.io/${REPOSITORY_LOWER}:sha-${COMMIT_SHA}"
 
-printf 'AWS account: %s\nRegion: %s\nGitHub repo: %s\nEnvironment: %s\nImage: %s\nHTTP allowlist: %s\n' "$ACCOUNT_ID" "$AWS_REGION" "$REPOSITORY" "$ENVIRONMENT" "$IMAGE" "$ALLOWED_CIDR"
+printf 'AWS account: %s\nRegion: %s\nGitHub repo: %s\nEnvironment: %s\nImage: %s\nWeb ingress: %s\nSSH ingress: %s\nHTTPS domain: %s\n' "$ACCOUNT_ID" "$AWS_REGION" "$REPOSITORY" "$ENVIRONMENT" "$IMAGE" "$WEB_ALLOWED_CIDR" "$SSH_ALLOWED_CIDR" "${DOMAIN_NAME:-disabled (HTTP only)}"
 echo "Enter a read:packages token for ${GHCR_USER}; it will be stored as an encrypted SSM SecureString."
 read -r -s -p 'GHCR read token: ' GHCR_READ_TOKEN
 echo
@@ -68,7 +78,10 @@ cat > terraform/assessment.auto.tfvars.json <<VARS
 {
   "aws_region": "${AWS_REGION}",
   "environment": "${ENVIRONMENT}",
-  "allowed_cidrs": ["${ALLOWED_CIDR}"],
+  "web_allowed_cidrs": ["${WEB_ALLOWED_CIDR}"],
+  "ssh_allowed_cidrs": ["${SSH_ALLOWED_CIDR}"],
+  "ssh_public_key_path": "${SSH_PUBLIC_KEY_PATH}",
+  "domain_name": "${DOMAIN_NAME}",
   "image": "${IMAGE}",
   "github_oidc_provider_arn": "${OIDC_PROVIDER_ARN}",
   "github_oidc_subject": "${OIDC_SUBJECT}",
@@ -89,4 +102,10 @@ echo "Infrastructure is created. Trigger the release workflow on main to deploy 
 gh workflow run release.yml --ref main
 echo "Track it with: gh run list --workflow release.yml --branch main --limit 3"
 PUBLIC_IP_OUT=$(terraform -chdir=terraform output -raw public_ip)
-echo "After a successful run, open http://${PUBLIC_IP_OUT}."
+echo "HTTP: http://${PUBLIC_IP_OUT}"
+echo "SSH: ssh -i ${SSH_PUBLIC_KEY_PATH%.pub} ec2-user@${PUBLIC_IP_OUT}"
+echo "Browser/CLI shell access uses AWS Systems Manager Session Manager; see terraform output ssm_session_command."
+if [[ -n $DOMAIN_NAME ]]; then
+  echo "Create/update DNS A record ${DOMAIN_NAME} -> ${PUBLIC_IP_OUT}; Caddy will provision HTTPS after DNS points here."
+  echo "HTTPS: https://${DOMAIN_NAME}"
+fi

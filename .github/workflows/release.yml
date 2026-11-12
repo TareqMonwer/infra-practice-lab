@@ -78,6 +78,15 @@ jobs:
           done
           if [[ "$ping_status" != Online ]]; then
             echo "Instance did not become an online SSM managed node (last status: $ping_status). Check that amazon-ssm-agent is running and the instance can reach the regional SSM endpoints over HTTPS."
+            echo 'EC2 details:'
+            aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$INSTANCE_ID" \
+              --query 'Reservations[0].Instances[0].{State:State.Name,AMI:ImageId,PublicIp:PublicIpAddress,Subnet:SubnetId,Profile:IamInstanceProfile.Arn,SecurityGroups:SecurityGroups[*].GroupId}' --output json || true
+            echo 'EC2 status checks:'
+            aws ec2 describe-instance-status --region "$AWS_REGION" --instance-ids "$INSTANCE_ID" \
+              --include-all-instances --query 'InstanceStatuses[0].{System:SystemStatus.Status,Instance:InstanceStatus.Status,Checks:Events}' --output json || true
+            echo 'SSM managed-node record:'
+            aws ssm describe-instance-information --region "$AWS_REGION" \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" --output json || true
             exit 1
           fi
           command_id=$(aws ssm send-command \

@@ -2,10 +2,6 @@
 set -euxo pipefail
 exec > >(tee -a /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
 
-# Register with SSM before slower Docker and CloudWatch setup.
-dnf install -y amazon-ssm-agent
-systemctl enable --now amazon-ssm-agent
-
 mkdir -p /opt/devops
 DOMAIN_NAME='${domain_name}'
 if [[ -n "$DOMAIN_NAME" ]]; then
@@ -25,6 +21,11 @@ SCRIPT
 
 sed -i "s|@AWS_REGION@|${aws_region}|g; s|@ENVIRONMENT@|${environment}|g; s|@DOMAIN_NAME@|${domain_name}|g" /opt/devops/deploy.sh
 chmod 700 /opt/devops/deploy.sh
+
+# The deploy script now exists before this host registers with SSM, avoiding a
+# race where the workflow sends its first command during bootstrap.
+dnf install -y amazon-ssm-agent
+systemctl enable --now amazon-ssm-agent
 
 # AL2023's curl-minimal already provides curl; installing curl conflicts with it.
 dnf update -y

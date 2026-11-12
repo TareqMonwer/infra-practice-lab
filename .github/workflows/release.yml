@@ -164,8 +164,8 @@ jobs:
               echo "Public HTTP probe returned $http_code. ${location:+Redirect location: $location}"
               {
                 echo '### Deployment endpoint'
-                echo "- Instance: `$INSTANCE_ID`"
-                echo "- Public IPv4: `$public_ip`"
+                echo "- Instance: $INSTANCE_ID"
+                echo "- Public IPv4: $public_ip"
                 echo "- URL: $app_url/"
                 [[ -z "$location" ]] || echo "- Redirects to: $location"
               } >> "$GITHUB_STEP_SUMMARY"
@@ -210,17 +210,17 @@ jobs:
             echo "The GitHub runner is outside those ranges, so it skipped the public probe. Try $app_url/ from an allowed network and compare the Mac's current public IP to the ingress CIDRs above."
             {
               echo '### Deployment endpoint'
-              echo "- Instance: `$INSTANCE_ID`"
-              echo "- Public IPv4: `$public_ip`"
+              echo "- Instance: $INSTANCE_ID"
+              echo "- Public IPv4: $public_ip"
               echo "- URL: $app_url/"
-              echo "- HTTP allowed sources: `$http_cidrs`"
+              echo "- HTTP allowed sources: $http_cidrs"
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Could not verify public HTTP until the Terraform IAM update is applied. Try $app_url/ from your Mac; this is the current EC2 address, which can differ from the old instance IP."
             {
               echo '### Deployment endpoint'
-              echo "- Instance: `$INSTANCE_ID`"
-              echo "- Public IPv4: `$public_ip`"
+              echo "- Instance: $INSTANCE_ID"
+              echo "- Public IPv4: $public_ip"
               echo "- URL: $app_url/"
               echo '- Public reachability: pending GitHub deploy-role diagnostic permissions'
             } >> "$GITHUB_STEP_SUMMARY"

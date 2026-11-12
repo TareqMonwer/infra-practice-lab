@@ -41,10 +41,6 @@ variable "domain_name" {
   description = "Optional DNS name for Caddy-managed HTTPS. Point its A record at the Terraform public_ip output."
   default     = ""
 }
-variable "image" {
-  type        = string
-  description = "Immutable GHCR image tag built by GitHub Actions."
-}
 variable "github_oidc_provider_arn" {
   type        = string
   description = "ARN output by terraform/bootstrap."
@@ -52,9 +48,4 @@ variable "github_oidc_provider_arn" {
 variable "github_oidc_subject" {
   type        = string
   description = "Exact GitHub OIDC subject for this repository's main branch."
-}
-
-variable "ghcr_username" {
-  type        = string
-  description = "GitHub username that owns the read:packages token stored in SSM."
 }

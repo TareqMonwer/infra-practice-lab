@@ -99,7 +99,7 @@ jobs:
             case "$state" in
               Success)
                 aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query '{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent}' --output json
-                exit 0
+                break
                 ;;
               Failed|Cancelled|TimedOut|DeliveryTimedOut|Undeliverable|Terminated)
                 aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --output json
@@ -108,6 +108,120 @@ jobs:
             esac
             sleep 10
           done
-          echo "SSM command $command_id did not finish within ten minutes."
-          aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --output json || true
-          exit 1
+          if [[ "$state" != Success ]]; then
+            echo "SSM command $command_id did not finish within ten minutes."
+            aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --output json || true
+            exit 1
+          fi
+
+          instance_json=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].{PublicIp:PublicIpAddress,Subnet:SubnetId,Vpc:VpcId,SecurityGroups:SecurityGroups[*].GroupId}' --output json)
+          public_ip=$(jq -r '.PublicIp // empty' <<< "$instance_json")
+          subnet_id=$(jq -r '.Subnet // empty' <<< "$instance_json")
+          vpc_id=$(jq -r '.Vpc // empty' <<< "$instance_json")
+          read -r -a security_group_ids <<< "$(jq -r '.SecurityGroups | join(" ")' <<< "$instance_json")"
+          if [[ -z "$public_ip" || "$public_ip" == None ]]; then
+            echo "Deployment succeeded but EC2 has no public IPv4 address. Instance details: $instance_json"
+            exit 1
+          fi
+
+          app_url="http://${public_ip}"
+          echo "Current instance: $INSTANCE_ID"
+          echo "Current public IPv4: $public_ip"
+          echo "App URL: $app_url/"
+          echo "Instance details: $instance_json"
+          security_group_inspected=false
+          if security_group_json=$(aws ec2 describe-security-groups --region "$AWS_REGION" \
+            --group-ids "${security_group_ids[@]}" \
+            --query 'SecurityGroups[].{GroupId:GroupId,Ingress:IpPermissions[].{Protocol:IpProtocol,From:FromPort,To:ToPort,IPv4:IpRanges[].CidrIp,IPv6:Ipv6Ranges[].CidrIpv6}}' \
+            --output json 2>&1); then
+            security_group_inspected=true
+            echo "Security-group ingress: $security_group_json"
+            http_cidrs=$(aws ec2 describe-security-groups --region "$AWS_REGION" \
+              --group-ids "${security_group_ids[@]}" \
+              --query 'SecurityGroups[].IpPermissions[?FromPort==`80` && ToPort==`80`].IpRanges[].CidrIp' \
+              --output text)
+          else
+            echo "Security-group inspection is not yet permitted for the GitHub deploy role: $security_group_json"
+            http_cidrs=""
+          fi
+
+          if [[ "$http_cidrs" == *'0.0.0.0/0'* ]]; then
+            echo "Checking public HTTP health endpoint from the GitHub runner..."
+            http_code=000
+            headers_file=$(mktemp)
+            body_file=$(mktemp)
+            error_file=$(mktemp)
+            for _ in $(seq 1 6); do
+              http_code=$(curl --silent --show-error --connect-timeout 4 --max-time 10 \
+                --dump-header "$headers_file" --output "$body_file" --write-out '%{http_code}' \
+                "$app_url/health" 2>"$error_file" || true)
+              if [[ "$http_code" =~ ^[23][0-9][0-9]$ ]]; then break; fi
+              sleep 5
+            done
+            location=$(awk 'tolower($1) == "location:" {print $2}' "$headers_file" | tr -d '\r' | tail -n 1)
+            if [[ "$http_code" =~ ^[23][0-9][0-9]$ ]]; then
+              echo "Public HTTP probe returned $http_code. ${location:+Redirect location: $location}"
+              {
+                echo '### Deployment endpoint'
+                echo "- Instance: `$INSTANCE_ID`"
+                echo "- Public IPv4: `$public_ip`"
+                echo "- URL: $app_url/"
+                [[ -z "$location" ]] || echo "- Redirects to: $location"
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Public HTTP probe failed (last status: $http_code). Error: $(cat "$error_file")"
+              echo "Allowed HTTP source CIDRs: $http_cidrs"
+              echo 'VPC route tables:'
+              aws ec2 describe-route-tables --region "$AWS_REGION" --filters "Name=vpc-id,Values=$vpc_id" \
+                --query 'RouteTables[].{RouteTable:RouteTableId,Associations:Associations[].{Subnet:SubnetId,Main:Main},Routes:Routes[].{Destination:DestinationCidrBlock,Gateway:GatewayId,State:State}}' --output json || true
+              echo 'Subnet network ACL entries:'
+              aws ec2 describe-network-acls --region "$AWS_REGION" --filters "Name=association.subnet-id,Values=$subnet_id" \
+                --query 'NetworkAcls[].{NetworkAcl:NetworkAclId,Entries:Entries[].{Rule:RuleNumber,Egress:Egress,Protocol:Protocol,Action:RuleAction,CIDR:CidrBlock,Ports:PortRange}}' --output json || true
+              diagnostic_script=$(cat <<'DIAGNOSTIC'
+          set -x
+          docker ps -a --filter name=devops-app
+          docker port devops-app || true
+          curl -sS -i --max-time 5 http://127.0.0.1/health || true
+          ss -lntp || true
+          docker logs --tail 80 devops-app || true
+          DIAGNOSTIC
+              )
+              diagnostic_parameters=$(jq -cn --arg command "$diagnostic_script" '{commands: [$command]}')
+              diagnostic_id=$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$INSTANCE_ID" \
+                --document-name AWS-RunShellScript --parameters "$diagnostic_parameters" \
+                --query 'Command.CommandId' --output text)
+              echo "Host network diagnostic SSM command: $diagnostic_id"
+              for _ in $(seq 1 12); do
+                diagnostic_state=$(aws ssm get-command-invocation --region "$AWS_REGION" \
+                  --command-id "$diagnostic_id" --instance-id "$INSTANCE_ID" \
+                  --query Status --output text 2>/dev/null || true)
+                case "$diagnostic_state" in
+                  Success|Failed|Cancelled|TimedOut|DeliveryTimedOut|Undeliverable|Terminated) break ;;
+                esac
+                sleep 5
+              done
+              aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$diagnostic_id" \
+                --instance-id "$INSTANCE_ID" --output json || true
+              exit 1
+            fi
+          elif [[ "$security_group_inspected" == true ]]; then
+            echo "HTTP is restricted to these CIDRs: $http_cidrs"
+            echo "The GitHub runner is outside those ranges, so it skipped the public probe. Try $app_url/ from an allowed network and compare the Mac's current public IP to the ingress CIDRs above."
+            {
+              echo '### Deployment endpoint'
+              echo "- Instance: `$INSTANCE_ID`"
+              echo "- Public IPv4: `$public_ip`"
+              echo "- URL: $app_url/"
+              echo "- HTTP allowed sources: `$http_cidrs`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Could not verify public HTTP until the Terraform IAM update is applied. Try $app_url/ from your Mac; this is the current EC2 address, which can differ from the old instance IP."
+            {
+              echo '### Deployment endpoint'
+              echo "- Instance: `$INSTANCE_ID`"
+              echo "- Public IPv4: `$public_ip`"
+              echo "- URL: $app_url/"
+              echo '- Public reachability: pending GitHub deploy-role diagnostic permissions'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

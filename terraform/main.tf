@@ -129,10 +129,8 @@ resource "aws_instance" "app" {
   }
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
     log_group     = aws_cloudwatch_log_group.app.name
-    image         = var.image
     environment   = var.environment
     aws_region    = var.aws_region
-    ghcr_username = var.ghcr_username
     domain_name   = var.domain_name
     deploy_script = file("${path.module}/../scripts/deploy.sh")
   })
@@ -146,6 +144,15 @@ resource "aws_instance" "app" {
     http_tokens                 = "required"
     http_put_response_hop_limit = 2
   }
+}
+
+resource "aws_eip" "app" {
+  domain = "vpc"
+  tags   = { Name = "${var.environment}-devops-assessment", App = "devops-assessment", Environment = var.environment }
+}
+resource "aws_eip_association" "app" {
+  allocation_id = aws_eip.app.id
+  instance_id   = aws_instance.app.id
 }
 
 resource "aws_iam_policy" "operator_session_manager" {
@@ -199,14 +206,14 @@ resource "aws_iam_role_policy" "github_deploy" {
         Resource  = "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/*",
         Condition = { StringEquals = { "ssm:resourceTag/App" = "devops-assessment" } }
       },
-      { Effect = "Allow", Action = ["ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation", "ec2:DescribeInstances", "ec2:DescribeInstanceStatus"], Resource = "*" }
+      { Effect = "Allow", Action = ["ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation", "ec2:DescribeInstances", "ec2:DescribeInstanceStatus", "ec2:DescribeSecurityGroups", "ec2:DescribeRouteTables", "ec2:DescribeNetworkAcls"], Resource = "*" }
     ]
   })
 }
 
 output "instance_id" { value = aws_instance.app.id }
-output "public_ip" { value = aws_instance.app.public_ip }
-output "app_http_url" { value = "http://${aws_instance.app.public_ip}" }
+output "public_ip" { value = aws_eip.app.public_ip }
+output "app_http_url" { value = "http://${aws_eip.app.public_ip}" }
 output "app_https_url" { value = var.domain_name == "" ? null : "https://${var.domain_name}" }
 output "ssm_session_command" { value = "aws ssm start-session --region ${var.aws_region} --target ${aws_instance.app.id}" }
 output "ssh_command" { value = var.ssh_public_key_path == "" ? null : "ssh -i ${trimsuffix(var.ssh_public_key_path, ".pub")} ec2-user@${aws_instance.app.public_ip}" }

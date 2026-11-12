@@ -55,17 +55,4 @@ JSON
   -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s \
   || echo "CloudWatch agent bootstrap failed; continuing"
 
-# Best-effort initial launch. The release workflow is the source of truth.
-# shellcheck disable=SC2016 # Terraform substitutes this single-quoted template value.
-aws ssm get-parameter --region '${aws_region}' --name /devops/ghcr-read-token \
-  --with-decryption --query Parameter.Value --output text \
-  | docker login ghcr.io -u '${ghcr_username}' --password-stdin \
-  && docker pull '${image}' \
-  && if [[ -n "$DOMAIN_NAME" ]]; then
-       docker run -d --name devops-app --restart unless-stopped --network devops \
-         -e PORT=8000 -e ENVIRONMENT='${environment}' '${image}'
-     else
-       docker run -d --name devops-app --restart unless-stopped -p 80:8000 \
-         -e PORT=8000 -e ENVIRONMENT='${environment}' '${image}'
-     fi \
-  || echo "Initial container did not start; the release workflow will deploy it"
+# The release workflow deploys the first and subsequent app images through SSM.

@@ -46,10 +46,7 @@ if [[ ! -f ${SSH_PUBLIC_KEY_PATH} ]]; then
   ssh-keygen -q -t ed25519 -N '' -C "devops-assessment-${ENVIRONMENT}" -f "${SSH_PUBLIC_KEY_PATH%.pub}"
   chmod 600 "${SSH_PUBLIC_KEY_PATH%.pub}"
 fi
-REPOSITORY_LOWER=$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')
-IMAGE="ghcr.io/${REPOSITORY_LOWER}:sha-${COMMIT_SHA}"
-
-printf 'AWS account: %s\nRegion: %s\nGitHub repo: %s\nEnvironment: %s\nImage: %s\nWeb ingress: %s\nSSH ingress: %s\nHTTPS domain: %s\n' "$ACCOUNT_ID" "$AWS_REGION" "$REPOSITORY" "$ENVIRONMENT" "$IMAGE" "$WEB_ALLOWED_CIDR" "$SSH_ALLOWED_CIDR" "${DOMAIN_NAME:-disabled (HTTP only)}"
+printf 'AWS account: %s\nRegion: %s\nGitHub repo: %s\nEnvironment: %s\nWeb ingress: %s\nSSH ingress: %s\nHTTPS domain: %s\n' "$ACCOUNT_ID" "$AWS_REGION" "$REPOSITORY" "$ENVIRONMENT" "$WEB_ALLOWED_CIDR" "$SSH_ALLOWED_CIDR" "${DOMAIN_NAME:-disabled (HTTP only)}"
 echo "Enter a read:packages token for ${GHCR_USER}; it will be stored as an encrypted SSM SecureString."
 read -r -s -p 'GHCR read token: ' GHCR_READ_TOKEN
 echo
@@ -82,10 +79,8 @@ cat > terraform/assessment.auto.tfvars.json <<VARS
   "ssh_allowed_cidrs": ["${SSH_ALLOWED_CIDR}"],
   "ssh_public_key_path": "${SSH_PUBLIC_KEY_PATH}",
   "domain_name": "${DOMAIN_NAME}",
-  "image": "${IMAGE}",
   "github_oidc_provider_arn": "${OIDC_PROVIDER_ARN}",
-  "github_oidc_subject": "${OIDC_SUBJECT}",
-  "ghcr_username": "${GHCR_USER}"
+  "github_oidc_subject": "${OIDC_SUBJECT}"
 }
 VARS
 terraform -chdir=terraform init -reconfigure -backend-config=backend.hcl

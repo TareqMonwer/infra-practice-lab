@@ -19,8 +19,10 @@ data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
   filter {
+    # Standard AL2023 only; the bare "al2023-ami-*" glob also matches
+    # al2023-ami-minimal-*, which has a 2 GB root and no SSM agent.
     name   = "name"
-    values = ["al2023-ami-*-x86_64"]
+    values = ["al2023-ami-20*-x86_64"]
   }
 }
 
@@ -87,6 +89,14 @@ resource "aws_instance" "app" {
   iam_instance_profile        = aws_iam_instance_profile.app.name
   associate_public_ip_address = true
   user_data_replace_on_change = true
+  # Explicit root volume: the default follows the AMI snapshot, which is too
+  # small for Docker plus the CloudWatch agent, and must be encrypted.
+  root_block_device {
+    volume_size           = 20
+    volume_type           = "gp3"
+    encrypted             = true
+    delete_on_termination = true
+  }
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
     log_group     = aws_cloudwatch_log_group.app.name
     image         = var.image

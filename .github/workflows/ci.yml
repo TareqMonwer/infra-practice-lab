@@ -17,5 +17,17 @@ jobs:
         with: {args: 'scripts/system_health.sh'}
       - uses: docker/build-push-action@v6
         with: {context: ., tags: devops-assessment:ci, load: true}
+      - name: Smoke test the image
+        run: |
+          docker run -d --name smoke -p 18080:8000 devops-assessment:ci
+          ready=""
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then echo "container never became healthy"; docker logs smoke; exit 1; fi
+          curl -fsS http://127.0.0.1:18080/ | grep -q 'Hello from DevOps Task'
+          docker logs smoke | tail -5
+          docker rm -f smoke
       - uses: aquasecurity/trivy-action@v0.36.0
         with: {image-ref: devops-assessment:ci, severity: 'CRITICAL', exit-code: '1', ignore-unfixed: true}

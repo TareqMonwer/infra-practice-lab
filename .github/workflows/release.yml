@@ -9,6 +9,7 @@ jobs:
   publish:
     permissions: {contents: read, packages: write}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
@@ -48,6 +49,7 @@ jobs:
     needs: publish
     if: github.ref == 'refs/heads/main' && vars.AWS_ROLE_ARN != '' && vars.AWS_REGION != '' && vars.DEPLOY_INSTANCE_ID != '' && vars.GHCR_USERNAME != ''
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions: {contents: read, id-token: write}
     steps:
       - uses: actions/checkout@v6
@@ -59,16 +61,18 @@ jobs:
         env:
           AWS_REGION: ${{ vars.AWS_REGION }}
           INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
-          IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          # Reuse the publish job's lowercased image reference; GHCR tags are always lowercase.
+          IMAGE: ${{ needs.publish.outputs.image }}:sha-${{ github.sha }}
           GHCR_USER: ${{ vars.GHCR_USERNAME }}
         run: |
+          ping_status=Unknown
           echo "Waiting for EC2 instance $INSTANCE_ID to register with Systems Manager in $AWS_REGION..."
           for _ in $(seq 1 30); do
             ping_status=$(aws ssm describe-instance-information \
               --region "$AWS_REGION" \
               --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
               --query 'InstanceInformationList[0].PingStatus' \
-              --output text)
+              --output text 2>/dev/null || echo Unknown)
             if [[ "$ping_status" == Online ]]; then break; fi
             sleep 10
           done
@@ -84,7 +88,7 @@ jobs:
             --query 'Command.CommandId' \
             --output text)
           echo "SSM command ID: $command_id"
-          for _ in $(seq 1 30); do
+          for _ in $(seq 1 60); do
             state=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || true)
             case "$state" in
               Success)
@@ -98,6 +102,6 @@ jobs:
             esac
             sleep 10
           done
-          echo "SSM command $command_id did not finish within five minutes."
+          echo "SSM command $command_id did not finish within ten minutes."
           aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --output json || true
           exit 1

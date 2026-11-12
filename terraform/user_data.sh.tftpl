@@ -3,6 +3,7 @@ set -euxo pipefail
 exec > >(tee -a /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
 
 mkdir -p /opt/devops
+# shellcheck disable=SC2016 # Terraform substitutes this single-quoted template value.
 DOMAIN_NAME='${domain_name}'
 if [[ -n "$DOMAIN_NAME" ]]; then
   docker network create devops || true
@@ -31,6 +32,7 @@ systemctl enable --now amazon-ssm-agent
 dnf update -y
 dnf install -y docker amazon-cloudwatch-agent awscli-2
 systemctl enable --now docker
+# shellcheck disable=SC2016 # Terraform substitutes this single-quoted template value.
 aws configure set region '${aws_region}'
 
 if [[ -n "$DOMAIN_NAME" ]]; then
@@ -54,6 +56,7 @@ JSON
   || echo "CloudWatch agent bootstrap failed; continuing"
 
 # Best-effort initial launch. The release workflow is the source of truth.
+# shellcheck disable=SC2016 # Terraform substitutes this single-quoted template value.
 aws ssm get-parameter --region '${aws_region}' --name /devops/ghcr-read-token \
   --with-decryption --query Parameter.Value --output text \
   | docker login ghcr.io -u '${ghcr_username}' --password-stdin \

@@ -14,9 +14,8 @@ jobs:
       - uses: hadolint/hadolint-action@v3.1.0
         with: {dockerfile: Dockerfile}
       - uses: bewuethr/shellcheck-action@v2.3.0
-        with: {args: 'scripts/system_health.sh'}
       - uses: docker/build-push-action@v6
-        with: {context: ., tags: devops-assessment:ci, load: true}
+        with: {context: ., tags: 'devops-assessment:ci', load: true}
       - name: Smoke test the image
         run: |
           docker run -d --name smoke -p 18080:8000 devops-assessment:ci
@@ -30,4 +29,4 @@ jobs:
           docker logs smoke | tail -5
           docker rm -f smoke
       - uses: aquasecurity/trivy-action@v0.36.0
-        with: {image-ref: devops-assessment:ci, severity: 'CRITICAL', exit-code: '1', ignore-unfixed: true}
+        with: {image-ref: 'devops-assessment:ci', severity: 'CRITICAL', exit-code: '1', ignore-unfixed: true}

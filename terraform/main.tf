@@ -19,10 +19,10 @@ data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
   filter {
-    # Standard AL2023 only; the bare "al2023-ami-*" glob also matches
-    # al2023-ami-minimal-*, which has a 2 GB root and no SSM agent.
+    # Match the standard AL2023 image name (including its kernel suffix),
+    # while excluding the smaller al2023-ami-minimal-* images.
     name   = "name"
-    values = ["al2023-ami-20*-x86_64"]
+    values = ["al2023-ami-2023.*-kernel-*-x86_64"]
   }
 }
 
@@ -164,7 +164,14 @@ resource "aws_iam_role_policy" "registry" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/devops/ghcr-read-token" },
+      {
+        Effect = "Allow",
+        Action = ["ssm:GetParameter"],
+        Resource = [
+          "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/devops/${var.environment}/ghcr-read-token",
+          "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/devops/${var.environment}/grafana-admin-password"
+        ]
+      },
       { Effect = "Allow", Action = ["kms:Decrypt"], Resource = "*", Condition = { StringEquals = { "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com" } } }
     ]
   })
@@ -195,11 +202,9 @@ resource "aws_instance" "app" {
     delete_on_termination = true
   }
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    log_group     = aws_cloudwatch_log_group.app.name
-    environment   = var.environment
-    aws_region    = var.aws_region
-    domain_name   = var.domain_name
-    deploy_script = file("${path.module}/../scripts/deploy.sh")
+    log_group   = aws_cloudwatch_log_group.app.name
+    aws_region  = var.aws_region
+    domain_name = var.domain_name
   })
   tags = { Name = "${var.environment}-devops-assessment", App = "devops-assessment", Environment = var.environment }
 

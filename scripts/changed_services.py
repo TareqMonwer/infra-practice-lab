@@ -14,7 +14,7 @@ SERVICE_ORDER = (
 )
 
 SERVICE_PATHS = {
-    "app": ("app/", "Dockerfile", ".dockerignore", "requirements.txt"),
+    "app": ("app/", "Dockerfile", ".dockerignore", "requirements.txt", "scripts/deploy.sh"),
     "prometheus": ("monitoring/prometheus/",),
     "grafana": ("monitoring/grafana/",),
     "loki": ("monitoring/loki.yml",),

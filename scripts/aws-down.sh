@@ -23,11 +23,12 @@ read -r -p 'Type destroy to continue: ' CONFIRM
 if [[ $CONFIRM != destroy ]]; then echo "Cancelled."; exit 1; fi
 terraform -chdir=terraform init -reconfigure -backend-config=backend.hcl
 terraform -chdir=terraform destroy -auto-approve -var-file=assessment.auto.tfvars.json
-aws ssm delete-parameter --region "$AWS_REGION" --name /devops/ghcr-read-token 2>/dev/null || true
+aws ssm delete-parameter --region "$AWS_REGION" --name "/devops/${ENVIRONMENT}/ghcr-read-token" 2>/dev/null || true
+aws ssm delete-parameter --region "$AWS_REGION" --name "/devops/${ENVIRONMENT}/grafana-admin-password" 2>/dev/null || true
 terraform -chdir=terraform/bootstrap destroy -auto-approve \
   -var="aws_region=${AWS_REGION}" \
   -var="state_bucket_name=${STATE_BUCKET}"
-for VARIABLE in AWS_ROLE_ARN AWS_REGION DEPLOY_INSTANCE_ID GHCR_USERNAME; do
+for VARIABLE in AWS_ROLE_ARN AWS_REGION DEPLOY_INSTANCE_ID GHCR_USERNAME DEPLOY_BUNDLE_BUCKET DEPLOY_ENVIRONMENT; do
   gh variable delete "$VARIABLE" 2>/dev/null || true
 done
 rm -f terraform/backend.hcl terraform/assessment.auto.tfvars.json

@@ -6,6 +6,7 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       ENVIRONMENT: "${ENVIRONMENT:-production}"
       APP_VERSION: "${APP_VERSION:-unknown}"
+    ports: ["80:8000"]
     expose: ["8000"]
     restart: unless-stopped
     healthcheck:
@@ -59,7 +60,7 @@ services:
     ports: ["127.0.0.1:3000:3000"]
     environment:
       GF_SECURITY_ADMIN_USER: "${GRAFANA_USER:-admin}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be provided outside version control}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-}"
     volumes: ["./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro", "./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro", "grafana-data:/var/lib/grafana"]
     restart: unless-stopped
     networks: [internal]

@@ -17,22 +17,22 @@ gh auth status >/dev/null
 
 REPOSITORY=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 GHCR_USER=$(gh api user --jq .login)
+GITHUB_SECRETS=$(gh secret list --json name --jq '.[].name')
+for SECRET in DHI_USERNAME DHI_TOKEN; do
+  if ! grep -Fxq "$SECRET" <<< "$GITHUB_SECRETS"; then
+    echo "Missing required GitHub Actions repository secret: $SECRET" >&2
+    exit 2
+  fi
+done
 CURRENT_BRANCH=$(git branch --show-current)
 if [[ $CURRENT_BRANCH != main ]]; then
-  echo "Run this from the main branch after pushing the commit and waiting for its Release and deploy workflow." >&2
+  echo "Run this from the main branch after pushing all changes." >&2
   exit 2
 fi
 if [[ -n $(git status --porcelain) ]]; then
-  echo "Commit and push all changes before provisioning; the EC2 image must match main." >&2
+  echo "Commit and push all changes to main before provisioning." >&2
   exit 2
 fi
-COMMIT_SHA=$(git rev-parse HEAD)
-RELEASE_RUN_ID=$(gh run list --workflow release.yml --branch main --limit 30 --json databaseId,headSha --jq ".[] | select(.headSha == \"${COMMIT_SHA}\") | .databaseId" | head -n 1)
-if [[ -z $RELEASE_RUN_ID ]] || ! gh run view "$RELEASE_RUN_ID" --json jobs --jq '.jobs[] | select(.name == "publish") | .conclusion' | grep -qx success; then
-  echo "The publish job for this main commit has not succeeded. Wait for the image build before provisioning." >&2
-  exit 2
-fi
-
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 STATE_BUCKET="devops-assessment-tfstate-${ACCOUNT_ID}-${AWS_REGION}"
 PUBLIC_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '\n')
@@ -51,6 +51,12 @@ echo "Enter a read:packages token for ${GHCR_USER}; it will be stored as an encr
 read -r -s -p 'GHCR read token: ' GHCR_READ_TOKEN
 echo
 if [[ -z $GHCR_READ_TOKEN ]]; then echo "A GHCR read token is required for the EC2 host." >&2; exit 2; fi
+read -r -s -p 'Grafana admin password (minimum 12 characters): ' GRAFANA_ADMIN_PASSWORD
+echo
+if [[ ! $GRAFANA_ADMIN_PASSWORD =~ ^[A-Za-z0-9._-]{12,}$ ]]; then
+  echo "The Grafana admin password must be at least 12 characters and use only letters, numbers, '.', '_' or '-'." >&2
+  exit 2
+fi
 
 # Bootstrap uses local state so that it can create the remote state bucket and OIDC provider.
 terraform -chdir=terraform/bootstrap init
@@ -59,11 +65,13 @@ terraform -chdir=terraform/bootstrap apply -auto-approve \
   -var="state_bucket_name=${STATE_BUCKET}"
 OIDC_PROVIDER_ARN=$(terraform -chdir=terraform/bootstrap output -raw github_oidc_provider_arn)
 
-# GitHub's immutable OIDC subject includes the numeric owner and repository IDs.
+# New repositories use immutable owner/repository IDs in the default OIDC subject.
 OIDC_SUBJECT=$(gh api "repos/${REPOSITORY}" --jq '"repo:\(.owner.login)@\(.owner.id)/\(.name)@\(.id):ref:refs/heads/main"')
-aws ssm put-parameter --region "$AWS_REGION" --name /devops/ghcr-read-token \
+aws ssm put-parameter --region "$AWS_REGION" --name "/devops/${ENVIRONMENT}/ghcr-read-token" \
   --type SecureString --overwrite --value "$GHCR_READ_TOKEN" >/dev/null
-unset GHCR_READ_TOKEN
+aws ssm put-parameter --region "$AWS_REGION" --name "/devops/${ENVIRONMENT}/grafana-admin-password" \
+  --type SecureString --overwrite --value "$GRAFANA_ADMIN_PASSWORD" >/dev/null
+unset GHCR_READ_TOKEN GRAFANA_ADMIN_PASSWORD
 
 cat > terraform/backend.hcl <<BACKEND
 bucket       = "${STATE_BUCKET}"
@@ -94,8 +102,9 @@ gh variable set GHCR_USERNAME --body "$GHCR_USER"
 gh variable set AWS_REGION --body "$AWS_REGION"
 gh variable set DEPLOY_INSTANCE_ID --body "$INSTANCE_ID"
 gh variable set DEPLOY_BUNDLE_BUCKET --body "$DEPLOY_BUNDLE_BUCKET"
+gh variable set DEPLOY_ENVIRONMENT --body "$ENVIRONMENT"
 
-echo "Infrastructure is created. Trigger the release workflow on main to deploy and health-check the app."
+echo "Infrastructure is created. Trigger the release workflow on main to publish the app and deploy the full stack."
 gh workflow run release.yml --ref main
 echo "Track it with: gh run list --workflow release.yml --branch main --limit 3"
 PUBLIC_IP_OUT=$(terraform -chdir=terraform output -raw public_ip)

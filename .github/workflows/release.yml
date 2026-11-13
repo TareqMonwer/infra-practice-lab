@@ -26,6 +26,8 @@ jobs:
             services=$(git ls-files | python scripts/changed_services.py)
           elif [[ "$EVENT_NAME" == "push" ]]; then
             services=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | python scripts/changed_services.py)
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            services=$(git ls-files | python scripts/changed_services.py)
           elif git rev-parse "${HEAD_SHA}^" >/dev/null 2>&1; then
             services=$(git diff --name-only "${HEAD_SHA}^" "$HEAD_SHA" | python scripts/changed_services.py)
           else
@@ -72,9 +74,9 @@ jobs:
           cache-to: type=gha,mode=max
   deploy:
     needs: [detect, publish]
-    if: github.ref == 'refs/heads/main' && contains(fromJSON(needs.detect.outputs.services), 'app') && vars.AWS_ROLE_ARN != '' && vars.AWS_REGION != '' && vars.DEPLOY_INSTANCE_ID != '' && vars.GHCR_USERNAME != '' && vars.DEPLOY_BUNDLE_BUCKET != ''
+    if: always() && needs.detect.result == 'success' && (needs.publish.result == 'success' || (needs.publish.result == 'skipped' && !contains(fromJSON(needs.detect.outputs.services), 'app'))) && github.ref == 'refs/heads/main' && needs.detect.outputs.services != '[]' && vars.AWS_ROLE_ARN != '' && vars.AWS_REGION != '' && vars.DEPLOY_INSTANCE_ID != '' && vars.GHCR_USERNAME != '' && vars.DEPLOY_BUNDLE_BUCKET != '' && vars.DEPLOY_ENVIRONMENT != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions: {contents: read, id-token: write}
     steps:
       - uses: actions/checkout@v6
@@ -88,7 +90,7 @@ jobs:
           BUNDLE_BUCKET: ${{ vars.DEPLOY_BUNDLE_BUCKET }}
         run: |
           bundle="$RUNNER_TEMP/deploy-bundle.tar.gz"
-          tar -czf "$bundle" docker-compose.ec2.yml monitoring
+          tar -czf "$bundle" docker-compose.ec2.yml monitoring scripts/deploy.sh
           bundle_uri="s3://${BUNDLE_BUCKET}/releases/${GITHUB_SHA}/deploy-bundle.tar.gz"
           aws s3 cp "$bundle" "$bundle_uri" --region "$AWS_REGION"
           echo "Uploaded deployment bundle: $bundle_uri"
@@ -97,10 +99,12 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
           INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
           GHCR_USER: ${{ vars.GHCR_USERNAME }}
+          BUNDLE_BUCKET: ${{ vars.DEPLOY_BUNDLE_BUCKET }}
+          DEPLOY_ENVIRONMENT: ${{ vars.DEPLOY_ENVIRONMENT }}
         run: |
           image_repository=$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
           IMAGE="ghcr.io/${image_repository}:sha-${GITHUB_SHA}"
-          echo "Deploying image: $IMAGE"
+          BUNDLE_URI="s3://${BUNDLE_BUCKET}/releases/${GITHUB_SHA}/deploy-bundle.tar.gz"
           ping_status=Unknown
           echo "Waiting for EC2 instance $INSTANCE_ID to register with Systems Manager in $AWS_REGION..."
           for _ in $(seq 1 30); do
@@ -125,15 +129,42 @@ jobs:
               --filters "Key=InstanceIds,Values=$INSTANCE_ID" --output json || true
             exit 1
           fi
+          readarray -t services < <(jq -r '.[]' <<< '${{ needs.detect.outputs.services }}')
+          printf 'Deploying changed services: %s\n' "${services[*]}"
+          printf -v bundle_uri_q '%q' "$BUNDLE_URI"
+          printf -v aws_region_q '%q' "$AWS_REGION"
+          printf -v image_q '%q' "$IMAGE"
+          printf -v ghcr_user_q '%q' "$GHCR_USER"
+          printf -v deploy_environment_q '%q' "$DEPLOY_ENVIRONMENT"
+          printf -v services_q '%q ' "${services[@]}"
+          deploy_command=$(printf '%s\n' \
+            'set -eu' \
+            'bundle_dir=$(mktemp -d /opt/devops/.deploy.XXXXXX)' \
+            'trap '\''rm -f "$bundle_dir/deploy-bundle.tar.gz" "$bundle_dir/scripts/deploy.sh"; rmdir "$bundle_dir/scripts" "$bundle_dir"'\'' 0' \
+            "bundle_uri=${bundle_uri_q}" \
+            "aws_region=${aws_region_q}" \
+            "image=${image_q}" \
+            "ghcr_user=${ghcr_user_q}" \
+            "deploy_environment=${deploy_environment_q}" \
+            'aws s3 cp "$bundle_uri" "$bundle_dir/deploy-bundle.tar.gz" --region "$aws_region"' \
+            'mkdir -p "$bundle_dir/scripts"' \
+            'tar -xzf "$bundle_dir/deploy-bundle.tar.gz" -C "$bundle_dir" scripts/deploy.sh' \
+            'chmod 700 "$bundle_dir/scripts/deploy.sh"' \
+            "for service in ${services_q}; do" \
+            '  service_image=' \
+            '  if [ "$service" = app ]; then service_image=$image; fi' \
+            '  "$bundle_dir/scripts/deploy.sh" "$service" "$bundle_uri" "$bundle_dir/deploy-bundle.tar.gz" "$service_image" "$ghcr_user" "$aws_region" "$deploy_environment"' \
+            'done')
+          command_parameters=$(jq -cn --arg command "$deploy_command" '{commands: [$command]}')
           command_id=$(aws ssm send-command \
             --region "$AWS_REGION" \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
-            --parameters "commands=['/opt/devops/deploy.sh $IMAGE $GHCR_USER']" \
+            --parameters "$command_parameters" \
             --query 'Command.CommandId' \
             --output text)
           echo "SSM command ID: $command_id"
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 90); do
             state=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || true)
             case "$state" in
               Success)
@@ -148,11 +179,12 @@ jobs:
             sleep 10
           done
           if [[ "$state" != Success ]]; then
-            echo "SSM command $command_id did not finish within ten minutes."
+            echo "SSM command $command_id did not finish within fifteen minutes."
             aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$command_id" --instance-id "$INSTANCE_ID" --output json || true
             exit 1
           fi
 
+          if [[ " ${services[*]} " == *" app "* ]]; then
           instance_json=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$INSTANCE_ID" \
             --query 'Reservations[0].Instances[0].{PublicIp:PublicIpAddress,Subnet:SubnetId,Vpc:VpcId,SecurityGroups:SecurityGroups[*].GroupId}' --output json)
           public_ip=$(jq -r '.PublicIp // empty' <<< "$instance_json")
@@ -219,11 +251,12 @@ jobs:
                 --query 'NetworkAcls[].{NetworkAcl:NetworkAclId,Entries:Entries[].{Rule:RuleNumber,Egress:Egress,Protocol:Protocol,Action:RuleAction,CIDR:CidrBlock,Ports:PortRange}}' --output json || true
               diagnostic_script=$(cat <<'DIAGNOSTIC'
           set -x
-          docker ps -a --filter name=devops-app
-          docker port devops-app || true
+          app_container=$(docker ps -aq --filter label=com.docker.compose.project=devops --filter label=com.docker.compose.service=app | head -n 1)
+          docker ps -a --filter label=com.docker.compose.project=devops --filter label=com.docker.compose.service=app
+          docker port "$app_container" || true
           curl -sS -i --max-time 5 http://127.0.0.1/health || true
           ss -lntp || true
-          docker logs --tail 80 devops-app || true
+          docker logs --tail 80 "$app_container" || true
           DIAGNOSTIC
               )
               diagnostic_parameters=$(jq -cn --arg command "$diagnostic_script" '{commands: [$command]}')
@@ -263,4 +296,5 @@ jobs:
               echo "- URL: $app_url/"
               echo '- Public reachability: pending GitHub deploy-role diagnostic permissions'
             } >> "$GITHUB_STEP_SUMMARY"
+          fi
           fi

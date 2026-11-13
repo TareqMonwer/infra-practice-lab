@@ -14,17 +14,6 @@ $DOMAIN_NAME {
 CADDY
 fi
 
-# Create the deploy script early; it waits while first-boot package setup finishes.
-cat >/opt/devops/deploy.sh <<'SCRIPT'
-${deploy_script}
-SCRIPT
-# shellcheck disable=SC2154 # Terraform substitutes these template variables.
-
-sed -i "s|@AWS_REGION@|${aws_region}|g; s|@ENVIRONMENT@|${environment}|g; s|@DOMAIN_NAME@|${domain_name}|g" /opt/devops/deploy.sh
-chmod 700 /opt/devops/deploy.sh
-
-# The deploy script now exists before this host registers with SSM, avoiding a
-# race where the workflow sends its first command during bootstrap.
 dnf install -y amazon-ssm-agent
 systemctl enable --now amazon-ssm-agent
 

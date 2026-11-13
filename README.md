@@ -39,7 +39,33 @@ curl -fsS http://localhost:8080/health
 
 The app is at `http://localhost:8080`; Grafana is at `http://localhost:3000` (credentials from `.env`). Prometheus, Loki, Alloy, Node Exporter, and cAdvisor are attached only to the internal Compose network. Provisioned dashboards are available under Dashboards. The monitoring compose file is the full local stack and includes the app; `docker-compose.yml` is the simpler app-only setup.
 
-`docker-compose.ec2.yml` is the EC2 deployment stack definition. It describes the app and all six monitoring services. The workflow loads the commit-specific deploy script from the private S3 bundle, so deployment-script changes do not require replacing EC2. The script installs the pinned Docker Compose v2.39.4 plugin only if it is missing, verifying the official release checksum. A push deploys only the services matched to changed files; manually dispatching the release workflow deploys the complete stack. The app image and Grafana password are supplied through deployment environment values; do not put production credentials in a checked-in `.env` file. Grafana binds to the EC2 loopback interface so it can be reached through an SSM port-forwarding session without opening its port publicly. Without a domain, the app is exposed on HTTP port 80; trusted HTTPS for a bare IP is not configured.
+`docker-compose.ec2.yml` is the EC2 deployment stack definition. It describes the app and all six monitoring services. The workflow loads the commit-specific deploy script from the private S3 bundle, so deployment-script changes do not require replacing EC2. The script installs the pinned Docker Compose v2.39.4 plugin only if it is missing, verifying the official release checksum. A push deploys only the services matched to changed files; manually dispatching the release workflow deploys the complete stack. Image pulls run quietly and separately from container startup to keep SSM diagnostics below its output limit. The deploy script allows up to five minutes for a service to become healthy and reports container state and recent logs on failure. The app image and Grafana password are supplied through deployment environment values; do not put production credentials in a checked-in `.env` file. Grafana binds to the EC2 loopback interface so it can be reached through an SSM port-forwarding session without opening its port publicly. Without a domain, the app is exposed on HTTP port 80; trusted HTTPS for a bare IP is not configured.
+
+### EC2 service URLs
+
+| Service | URL / address | Reachability |
+| --- | --- | --- |
+| App | `http://<EC2_PUBLIC_IP>/` | Public or limited by `web_allowed_cidrs`; HTTP only without a domain |
+| App health | `http://<EC2_PUBLIC_IP>/health` | Same as app |
+| App metrics | `http://<EC2_PUBLIC_IP>/metrics` | Same as app; use ingress rules appropriately |
+| Grafana | `http://localhost:3000/` after the SSM port-forward below | EC2 loopback only; authenticate with the Grafana admin password supplied during provisioning |
+| Prometheus | `http://prometheus:9090/` | Internal Compose network only; not exposed on the EC2 host |
+| Loki | `http://loki:3100/` | Internal Compose network only; not exposed on the EC2 host |
+| Alloy | `alloy` (logs are sent to `http://loki:3100`) | Internal Compose network only; no Alloy UI port is published |
+| Node Exporter | `http://node-exporter:9100/metrics` | Internal Compose network only |
+| cAdvisor | `http://cadvisor:8080/metrics` | Internal Compose network only |
+
+Use the Terraform `public_ip` output in place of `<EC2_PUBLIC_IP>`. To open Grafana from a local browser, start a port-forwarding session (replace the instance ID and region):
+
+```sh
+aws ssm start-session \
+  --region ap-southeast-1 \
+  --target <EC2_INSTANCE_ID> \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["3000"],"localPortNumber":["3000"]}'
+```
+
+Then browse to `http://localhost:3000/`. Prometheus, Loki, Alloy, Node Exporter, and cAdvisor intentionally have no public URLs or host-published ports; Grafana and Prometheus access them over the private Compose network.
 
 The development run and test commands are:
 

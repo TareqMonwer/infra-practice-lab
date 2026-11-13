@@ -5,12 +5,12 @@ from pathlib import PurePosixPath
 
 SERVICE_ORDER = (
     "app",
-    "prometheus",
-    "grafana",
     "loki",
     "alloy",
     "node-exporter",
     "cadvisor",
+    "prometheus",
+    "grafana",
 )
 
 SERVICE_PATHS = {

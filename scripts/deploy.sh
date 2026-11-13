@@ -142,7 +142,7 @@ if [ -n "$previous_container" ]; then
 fi
 
 wait_for_health() {
-    for _ in $(seq 1 30); do
+    for _ in $(seq 1 150); do
         container_id=$(docker ps -q \
             --filter label=com.docker.compose.project=devops \
             --filter "label=com.docker.compose.service=${service}" | head -n 1)
@@ -169,6 +169,13 @@ wait_for_health() {
         fi
         sleep 2
     done
+    container_id=$(docker ps -aq \
+        --filter label=com.docker.compose.project=devops \
+        --filter "label=com.docker.compose.service=${service}" | head -n 1)
+    if [ -n "$container_id" ]; then
+        echo "$service container state after health-check timeout:" >&2
+        docker inspect --format '{{json .State}}' "$container_id" >&2 || true
+    fi
     return 1
 }
 
@@ -217,8 +224,22 @@ if [ "$service" = app ]; then
     docker rm -f devops-app >/dev/null 2>&1 || true
 fi
 
-if ! compose up -d --no-deps "$service"; then
+if ! compose pull --quiet "$service"; then
+    echo "Could not pull the $service image; collecting host and Compose diagnostics." >&2
+    df -h / >&2 || true
+    docker system df >&2 || true
+    compose ps >&2 || true
+    compose logs --tail 100 "$service" >&2 || true
+    if ! restore_previous; then
+        echo "$service image pull failed and rollback was unsuccessful" >&2
+    fi
+    exit 1
+fi
+
+if ! compose up --pull never -d --no-deps "$service"; then
     echo "Compose failed to start $service; collecting diagnostics." >&2
+    df -h / >&2 || true
+    docker system df >&2 || true
     compose ps >&2 || true
     compose logs --tail 100 "$service" >&2 || true
     if ! restore_previous; then

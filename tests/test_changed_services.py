@@ -31,6 +31,18 @@ def test_affected_services(paths, expected):
     assert affected_services(paths) == expected
 
 
+def test_full_stack_deploy_order_respects_service_dependencies():
+    assert affected_services(["docker-compose.ec2.yml"]) == [
+        "app",
+        "loki",
+        "alloy",
+        "node-exporter",
+        "cadvisor",
+        "prometheus",
+        "grafana",
+    ]
+
+
 def test_cli_reads_changed_paths_from_stdin():
     script = Path(__file__).parents[1] / "scripts" / "changed_services.py"
     result = subprocess.run(

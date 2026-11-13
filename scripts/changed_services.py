@@ -28,7 +28,7 @@ def affected_services(paths: Iterable[str]) -> list[str]:
     for changed_path in paths:
         path = PurePosixPath(changed_path).as_posix().removeprefix("./")
 
-        if path == "docker-compose.monitoring.yml":
+        if path in ("docker-compose.monitoring.yml", "docker-compose.ec2.yml"):
             affected.update(SERVICE_ORDER)
             continue
 

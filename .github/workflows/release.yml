@@ -72,7 +72,7 @@ jobs:
           cache-to: type=gha,mode=max
   deploy:
     needs: [detect, publish]
-    if: github.ref == 'refs/heads/main' && contains(fromJSON(needs.detect.outputs.services), 'app') && vars.AWS_ROLE_ARN != '' && vars.AWS_REGION != '' && vars.DEPLOY_INSTANCE_ID != '' && vars.GHCR_USERNAME != ''
+    if: github.ref == 'refs/heads/main' && contains(fromJSON(needs.detect.outputs.services), 'app') && vars.AWS_ROLE_ARN != '' && vars.AWS_REGION != '' && vars.DEPLOY_INSTANCE_ID != '' && vars.GHCR_USERNAME != '' && vars.DEPLOY_BUNDLE_BUCKET != ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions: {contents: read, id-token: write}
@@ -82,6 +82,16 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+      - name: Upload commit-specific Compose bundle
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          BUNDLE_BUCKET: ${{ vars.DEPLOY_BUNDLE_BUCKET }}
+        run: |
+          bundle="$RUNNER_TEMP/deploy-bundle.tar.gz"
+          tar -czf "$bundle" docker-compose.ec2.yml monitoring
+          bundle_uri="s3://${BUNDLE_BUCKET}/releases/${GITHUB_SHA}/deploy-bundle.tar.gz"
+          aws s3 cp "$bundle" "$bundle_uri" --region "$AWS_REGION"
+          echo "Uploaded deployment bundle: $bundle_uri"
       - name: Deploy through SSM and verify with rollback
         env:
           AWS_REGION: ${{ vars.AWS_REGION }}

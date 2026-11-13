@@ -88,10 +88,12 @@ terraform -chdir=terraform plan -var-file=assessment.auto.tfvars.json
 terraform -chdir=terraform apply -auto-approve -var-file=assessment.auto.tfvars.json
 ROLE_ARN=$(terraform -chdir=terraform output -raw github_actions_role_arn)
 INSTANCE_ID=$(terraform -chdir=terraform output -raw instance_id)
+DEPLOY_BUNDLE_BUCKET=$(terraform -chdir=terraform output -raw deploy_bundle_bucket)
 gh variable set AWS_ROLE_ARN --body "$ROLE_ARN"
 gh variable set GHCR_USERNAME --body "$GHCR_USER"
 gh variable set AWS_REGION --body "$AWS_REGION"
 gh variable set DEPLOY_INSTANCE_ID --body "$INSTANCE_ID"
+gh variable set DEPLOY_BUNDLE_BUCKET --body "$DEPLOY_BUNDLE_BUCKET"
 
 echo "Infrastructure is created. Trigger the release workflow on main to deploy and health-check the app."
 gh workflow run release.yml --ref main

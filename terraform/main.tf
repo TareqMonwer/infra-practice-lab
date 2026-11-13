@@ -85,11 +85,78 @@ resource "aws_cloudwatch_log_group" "app" {
   name              = "/${var.environment}/devops-app"
   retention_in_days = 14
 }
+resource "aws_s3_bucket" "deploy_bundle" {
+  bucket = "${var.environment}-devops-deploy-${data.aws_caller_identity.current.account_id}-${var.aws_region}"
+  tags   = { App = "devops-assessment", Environment = var.environment }
+}
+resource "aws_s3_bucket_versioning" "deploy_bundle" {
+  bucket = aws_s3_bucket.deploy_bundle.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+resource "aws_s3_bucket_server_side_encryption_configuration" "deploy_bundle" {
+  bucket = aws_s3_bucket.deploy_bundle.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+resource "aws_s3_bucket_public_access_block" "deploy_bundle" {
+  bucket                  = aws_s3_bucket.deploy_bundle.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+resource "aws_s3_bucket_ownership_controls" "deploy_bundle" {
+  bucket = aws_s3_bucket.deploy_bundle.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+resource "aws_s3_bucket_lifecycle_configuration" "deploy_bundle" {
+  bucket = aws_s3_bucket.deploy_bundle.id
+  rule {
+    id     = "expire-release-bundles"
+    status = "Enabled"
+    filter {
+      prefix = "releases/"
+    }
+    expiration {
+      days = 90
+    }
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+}
+resource "aws_s3_bucket_policy" "deploy_bundle" {
+  bucket = aws_s3_bucket.deploy_bundle.id
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect    = "Deny",
+      Principal = "*",
+      Action    = "s3:*",
+      Resource  = [aws_s3_bucket.deploy_bundle.arn, "${aws_s3_bucket.deploy_bundle.arn}/*"],
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+}
 resource "aws_iam_role_policy" "logs" {
   role = aws_iam_role.instance.id
   policy = jsonencode({
     Version   = "2012-10-17",
     Statement = [{ Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"], Resource = "${aws_cloudwatch_log_group.app.arn}:*" }]
+  })
+}
+resource "aws_iam_role_policy" "deploy_bundle_read" {
+  role = aws_iam_role.instance.id
+  policy = jsonencode({
+    Version   = "2012-10-17",
+    Statement = [{ Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.deploy_bundle.arn}/releases/*" }]
   })
 }
 resource "aws_iam_role_policy" "registry" {
@@ -206,6 +273,11 @@ resource "aws_iam_role_policy" "github_deploy" {
         Resource  = "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/*",
         Condition = { StringEquals = { "ssm:resourceTag/App" = "devops-assessment" } }
       },
+      {
+        Effect   = "Allow",
+        Action   = ["s3:PutObject"],
+        Resource = "${aws_s3_bucket.deploy_bundle.arn}/releases/*"
+      },
       { Effect = "Allow", Action = ["ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation", "ec2:DescribeInstances", "ec2:DescribeInstanceStatus", "ec2:DescribeSecurityGroups", "ec2:DescribeRouteTables", "ec2:DescribeNetworkAcls"], Resource = "*" }
     ]
   })
@@ -213,6 +285,7 @@ resource "aws_iam_role_policy" "github_deploy" {
 
 output "instance_id" { value = aws_instance.app.id }
 output "public_ip" { value = aws_eip.app.public_ip }
+output "deploy_bundle_bucket" { value = aws_s3_bucket.deploy_bundle.id }
 output "app_http_url" { value = "http://${aws_eip.app.public_ip}" }
 output "app_https_url" { value = var.domain_name == "" ? null : "https://${var.domain_name}" }
 output "ssm_session_command" { value = "aws ssm start-session --region ${var.aws_region} --target ${aws_instance.app.id}" }

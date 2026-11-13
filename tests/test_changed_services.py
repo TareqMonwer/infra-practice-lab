@@ -18,6 +18,7 @@ from scripts.changed_services import SERVICE_ORDER, affected_services
         (["monitoring/alloy.alloy"], ["alloy"]),
         (["docker-compose.yml"], ["app"]),
         (["docker-compose.monitoring.yml"], list(SERVICE_ORDER)),
+        (["docker-compose.ec2.yml"], list(SERVICE_ORDER)),
         (["README.md", ".github/workflows/release.yml"], []),
         (
             ["monitoring/grafana/dashboards/host.json", "monitoring/prometheus/alerts.yml"],

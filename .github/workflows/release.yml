@@ -6,7 +6,36 @@ on:
   workflow_dispatch:
 permissions: {contents: read, packages: write}
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+    outputs:
+      services: ${{ steps.changed.outputs.services }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Identify changed services
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == "push" && "$BASE_SHA" =~ ^0+$ ]]; then
+            services=$(git ls-files | python scripts/changed_services.py)
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            services=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | python scripts/changed_services.py)
+          elif git rev-parse "${HEAD_SHA}^" >/dev/null 2>&1; then
+            services=$(git diff --name-only "${HEAD_SHA}^" "$HEAD_SHA" | python scripts/changed_services.py)
+          else
+            services=$(git ls-files | python scripts/changed_services.py)
+          fi
+          echo "Changed services: $services"
+          echo "services=$services" >> "$GITHUB_OUTPUT"
   publish:
+    needs: detect
+    if: startsWith(github.ref, 'refs/tags/') || contains(fromJSON(needs.detect.outputs.services), 'app')
     permissions: {contents: read, packages: write}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -42,8 +71,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
   deploy:
-    needs: publish
-    if: github.ref == 'refs/heads/main' && vars.AWS_ROLE_ARN != '' && vars.AWS_REGION != '' && vars.DEPLOY_INSTANCE_ID != '' && vars.GHCR_USERNAME != ''
+    needs: [detect, publish]
+    if: github.ref == 'refs/heads/main' && contains(fromJSON(needs.detect.outputs.services), 'app') && vars.AWS_ROLE_ARN != '' && vars.AWS_REGION != '' && vars.DEPLOY_INSTANCE_ID != '' && vars.GHCR_USERNAME != ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions: {contents: read, id-token: write}

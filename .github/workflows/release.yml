@@ -74,11 +74,36 @@ jobs:
           cache-to: type=gha,mode=max
   deploy:
     needs: [detect, publish]
-    if: always() && needs.detect.result == 'success' && (needs.publish.result == 'success' || (needs.publish.result == 'skipped' && !contains(fromJSON(needs.detect.outputs.services), 'app'))) && github.ref == 'refs/heads/main' && needs.detect.outputs.services != '[]' && vars.AWS_ROLE_ARN != '' && vars.AWS_REGION != '' && vars.DEPLOY_INSTANCE_ID != '' && vars.GHCR_USERNAME != '' && vars.DEPLOY_BUNDLE_BUCKET != '' && vars.DEPLOY_ENVIRONMENT != ''
+    if: always() && needs.detect.result == 'success' && (needs.publish.result == 'success' || (needs.publish.result == 'skipped' && !contains(fromJSON(needs.detect.outputs.services), 'app'))) && github.ref == 'refs/heads/main' && needs.detect.outputs.services != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: {contents: read, id-token: write}
     steps:
+      - name: Validate deployment configuration
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
+          GHCR_USER: ${{ vars.GHCR_USERNAME }}
+          BUNDLE_BUCKET: ${{ vars.DEPLOY_BUNDLE_BUCKET }}
+          DEPLOY_ENVIRONMENT: ${{ vars.DEPLOY_ENVIRONMENT }}
+        run: |
+          missing=()
+          [[ -n "$AWS_ROLE_ARN" ]] || missing+=(AWS_ROLE_ARN)
+          [[ -n "$AWS_REGION" ]] || missing+=(AWS_REGION)
+          [[ -n "$INSTANCE_ID" ]] || missing+=(DEPLOY_INSTANCE_ID)
+          [[ -n "$GHCR_USER" ]] || missing+=(GHCR_USERNAME)
+          [[ -n "$BUNDLE_BUCKET" ]] || missing+=(DEPLOY_BUNDLE_BUCKET)
+          [[ -n "$DEPLOY_ENVIRONMENT" ]] || missing+=(DEPLOY_ENVIRONMENT)
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required GitHub Actions repository variables: %s\n' "${missing[*]}" >&2
+            echo "Set these variables by running scripts/aws-up.sh after configuring AWS credentials and the required GitHub secrets." >&2
+            exit 1
+          fi
+          if [[ "$DEPLOY_ENVIRONMENT" != staging && "$DEPLOY_ENVIRONMENT" != production ]]; then
+            echo "DEPLOY_ENVIRONMENT must be staging or production." >&2
+            exit 1
+          fi
       - uses: actions/checkout@v6
       - uses: aws-actions/configure-aws-credentials@v6
         with:

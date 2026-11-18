@@ -294,6 +294,6 @@ output "deploy_bundle_bucket" { value = aws_s3_bucket.deploy_bundle.id }
 output "app_http_url" { value = "http://${aws_eip.app.public_ip}" }
 output "app_https_url" { value = var.domain_name == "" ? null : "https://${var.domain_name}" }
 output "ssm_session_command" { value = "aws ssm start-session --region ${var.aws_region} --target ${aws_instance.app.id}" }
-output "ssh_command" { value = var.ssh_public_key_path == "" ? null : "ssh -i ${trimsuffix(var.ssh_public_key_path, ".pub")} ec2-user@${aws_instance.app.public_ip}" }
+output "ssh_command" { value = var.ssh_public_key_path == "" ? null : "ssh -i ${trimsuffix(var.ssh_public_key_path, ".pub")} ec2-user@${aws_eip.app.public_ip}" }
 output "operator_session_manager_policy_arn" { value = aws_iam_policy.operator_session_manager.arn }
 output "github_actions_role_arn" { value = aws_iam_role.github_actions.arn }

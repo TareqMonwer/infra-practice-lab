@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-AWS_REGION=${AWS_REGION:-us-east-1}
+AWS_REGION=${AWS_REGION:-ap-southeast-1}
 ENVIRONMENT=${ENVIRONMENT:-staging}
 if [[ $ENVIRONMENT != staging && $ENVIRONMENT != production ]]; then
   echo "ENVIRONMENT must be staging or production" >&2

@@ -39,33 +39,34 @@ curl -fsS http://localhost:8080/health
 
 The app is at `http://localhost:8080`; Grafana is at `http://localhost:3000` (credentials from `.env`). Prometheus, Loki, Alloy, Node Exporter, and cAdvisor are attached only to the internal Compose network. Provisioned dashboards are available under Dashboards. The monitoring compose file is the full local stack and includes the app; `docker-compose.yml` is the simpler app-only setup.
 
-`docker-compose.ec2.yml` is the EC2 deployment stack definition. It describes the app and all six monitoring services. The workflow loads the commit-specific deploy script from the private S3 bundle, so deployment-script changes do not require replacing EC2. The script installs the pinned Docker Compose v2.39.4 plugin only if it is missing, verifying the official release checksum. A push deploys only the services matched to changed files; manually dispatching the release workflow deploys the complete stack. Image pulls run quietly and separately from container startup to keep SSM diagnostics below its output limit. The deploy script allows up to five minutes for a service to become healthy and reports container state and recent logs on failure. The app image and Grafana password are supplied through deployment environment values; do not put production credentials in a checked-in `.env` file. Grafana binds to the EC2 loopback interface so it can be reached through an SSM port-forwarding session without opening its port publicly. Without a domain, the app is exposed on HTTP port 80; trusted HTTPS for a bare IP is not configured.
+`docker-compose.ec2.yml` is the EC2 deployment stack definition. It describes the app and all six monitoring services. The workflow loads the commit-specific deploy script from the private S3 bundle, so deployment-script changes do not require replacing EC2. The script installs the pinned Docker Compose v2.39.4 plugin only if it is missing, verifying the official release checksum. A push deploys only the services matched to changed files; manually dispatching the release workflow deploys the complete stack. Image pulls run quietly and separately from container startup to keep SSM diagnostics below its output limit. The deploy script allows up to five minutes for a service to become healthy and reports container state and recent logs on failure. The app image and Grafana password are supplied through deployment environment values; do not put production credentials in a checked-in `.env` file. Grafana and monitoring endpoints bind only to EC2 loopback and are reached through SSM port forwarding; their ports are not exposed to the internet. Services that publish loopback ports also join the regular `edge` Compose network, because Docker never activates published ports for containers attached only to an `internal: true` network. Without a domain, the app is exposed on HTTP port 80; trusted HTTPS for a bare IP is not configured.
 
-### EC2 service URLs
+### EC2 service URLs and paths
 
-| Service | URL / address | Reachability |
-| --- | --- | --- |
-| App | `http://<EC2_PUBLIC_IP>/` | Public or limited by `web_allowed_cidrs`; HTTP only without a domain |
-| App health | `http://<EC2_PUBLIC_IP>/health` | Same as app |
-| App metrics | `http://<EC2_PUBLIC_IP>/metrics` | Same as app; use ingress rules appropriately |
-| Grafana | `http://localhost:3000/` after the SSM port-forward below | EC2 loopback only; authenticate with the Grafana admin password supplied during provisioning |
-| Prometheus | `http://prometheus:9090/` | Internal Compose network only; not exposed on the EC2 host |
-| Loki | `http://loki:3100/` | Internal Compose network only; not exposed on the EC2 host |
-| Alloy | `alloy` (logs are sent to `http://loki:3100`) | Internal Compose network only; no Alloy UI port is published |
-| Node Exporter | `http://node-exporter:9100/metrics` | Internal Compose network only |
-| cAdvisor | `http://cadvisor:8080/metrics` | Internal Compose network only |
+The app is reachable through the Terraform `public_ip` output. Monitoring endpoints are private: each monitoring port is bound to EC2 loopback, not the public network. Start an SSM port-forwarding session for a service, then open its `localhost` URL in your browser. The path column lists the useful UI, health, or metrics endpoint.
 
-Use the Terraform `public_ip` output in place of `<EC2_PUBLIC_IP>`. To open Grafana from a local browser, start a port-forwarding session (replace the instance ID and region):
+| Service | Local URL after starting its tunnel | Useful path | EC2 port |
+| --- | --- | --- | --- |
+| App | `http://<EC2_PUBLIC_IP>/` | `/`, `/health`, `/metrics` | 80 (public, subject to `web_allowed_cidrs`) |
+| Grafana | `http://localhost:3000/` | `/` (provisioned dashboards are under Dashboards) | 3000 |
+| Prometheus | `http://localhost:9090/` | `/` (UI), `/targets` (scrape targets), `/graph` (query UI) | 9090 |
+| Loki | `http://localhost:3100/` | `/ready` (readiness), `/loki/api/v1/query_range` (query API) | 3100 |
+| Alloy | `http://localhost:12345/` | `/` (component UI) | 12345 |
+| Node Exporter | `http://localhost:9100/metrics` | `/metrics` | 9100 |
+| cAdvisor | `http://localhost:8080/metrics` | `/metrics` | 8080 |
+
+Set the instance ID and region, then run one tunnel command per service in separate terminals. The command keeps running while the tunnel is active; use Ctrl-C to close it. If a local port is already in use, choose a different `localPortNumber` and use that port in the browser URL.
 
 ```sh
-aws ssm start-session \
-  --region ap-southeast-1 \
-  --target <EC2_INSTANCE_ID> \
+export AWS_REGION=ap-southeast-1
+export EC2_INSTANCE_ID=<EC2_INSTANCE_ID>
+
+aws ssm start-session --region "$AWS_REGION" --target "$EC2_INSTANCE_ID" \
   --document-name AWS-StartPortForwardingSession \
-  --parameters '{"portNumber":["3000"],"localPortNumber":["3000"]}'
+  --parameters '{"portNumber":["3000"],"localPortNumber":["3000"]}' # Grafana
 ```
 
-Then browse to `http://localhost:3000/`. Prometheus, Loki, Alloy, Node Exporter, and cAdvisor intentionally have no public URLs or host-published ports; Grafana and Prometheus access them over the private Compose network.
+For the other services, repeat the command in another terminal, replacing both port values with the EC2 port from the table (9090 for Prometheus, 3100 for Loki, 12345 for Alloy, 9100 for Node Exporter, or 8080 for cAdvisor). The app remains available directly at `http://<EC2_PUBLIC_IP>/`; it is HTTP-only without a domain.
 
 The development run and test commands are:
 

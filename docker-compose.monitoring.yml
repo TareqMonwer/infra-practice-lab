@@ -7,7 +7,7 @@ services:
     labels: {logging: "promtail"}
     restart: unless-stopped
     healthcheck: {test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"], interval: 30s, timeout: 3s, retries: 3}
-    networks: [internal]
+    networks: [internal, edge]
     mem_limit: 256m
     cpus: 0.5
   prometheus:
@@ -42,7 +42,9 @@ services:
     ports: ["3000:3000"]
     environment: {GF_SECURITY_ADMIN_USER: "${GRAFANA_USER:-admin}", GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD in .env}"}
     volumes: ["./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro", "./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro", "grafana-data:/var/lib/grafana"]
-    networks: [internal]
+    networks: [internal, edge]
     depends_on: [prometheus, loki]
-networks: {internal: {internal: true}}
+# Services with `ports:` also join `edge`: Docker never activates published ports
+# for containers attached only to `internal: true` networks.
+networks: {internal: {internal: true}, edge: {driver: bridge}}
 volumes: {prometheus-data: {}, loki-data: {}, grafana-data: {}, alloy-data: {}}

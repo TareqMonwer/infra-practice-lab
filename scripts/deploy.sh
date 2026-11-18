@@ -150,12 +150,12 @@ wait_for_health() {
             case "$service" in
                 app)
                     health=$(docker inspect --format '{{.State.Health.Status}}' "$container_id" 2>/dev/null || true)
-                    if [ "$health" = healthy ] && curl --fail --silent --show-error --max-time 5 http://127.0.0.1/health >/dev/null; then
+                    if [ "$health" = healthy ] && curl --fail --silent --max-time 5 http://127.0.0.1/health >/dev/null; then
                         return 0
                     fi
                     ;;
                 grafana)
-                    if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/api/health >/dev/null; then
+                    if curl --fail --silent --max-time 5 http://127.0.0.1:3000/api/health >/dev/null; then
                         return 0
                     fi
                     ;;

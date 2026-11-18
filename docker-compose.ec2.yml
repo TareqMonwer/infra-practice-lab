@@ -22,38 +22,43 @@ services:
     image: prom/prometheus:v3.1.0
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d", "--web.enable-lifecycle"]
     volumes: ["./monitoring/prometheus:/etc/prometheus:ro", "prometheus-data:/prometheus"]
+    ports: ["127.0.0.1:9090:9090"]
     restart: unless-stopped
-    networks: [internal]
+    networks: [internal, edge]
     depends_on: [app, node-exporter, cadvisor]
 
   loki:
     image: grafana/loki:3.3.2
     command: ["-config.file=/etc/loki/local-config.yaml"]
     volumes: ["./monitoring/loki.yml:/etc/loki/local-config.yaml:ro", "loki-data:/loki"]
+    ports: ["127.0.0.1:3100:3100"]
     restart: unless-stopped
-    networks: [internal]
+    networks: [internal, edge]
 
   alloy:
     image: grafana/alloy:v1.5.1
-    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data", "--server.http.listen-addr=0.0.0.0:12345"]
     volumes: ["./monitoring/alloy.alloy:/etc/alloy/config.alloy:ro", "/var/run/docker.sock:/var/run/docker.sock:ro", "alloy-data:/var/lib/alloy/data"]
+    ports: ["127.0.0.1:12345:12345"]
     restart: unless-stopped
-    networks: [internal]
+    networks: [internal, edge]
     depends_on: [loki]
 
   node-exporter:
     image: prom/node-exporter:v1.8.2
     command: ["--path.rootfs=/host", "--path.procfs=/host/proc", "--path.sysfs=/host/sys", "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"]
     volumes: ["/:/host:ro,rslave", "/proc:/host/proc:ro", "/sys:/host/sys:ro"]
+    ports: ["127.0.0.1:9100:9100"]
     restart: unless-stopped
-    networks: [internal]
+    networks: [internal, edge]
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.51.0
     privileged: true
     volumes: ["/:/rootfs:ro", "/var/run:/var/run:ro", "/sys:/sys:ro", "/var/lib/docker:/var/lib/docker:ro", "/dev/disk:/dev/disk:ro"]
+    ports: ["127.0.0.1:8080:8080"]
     restart: unless-stopped
-    networks: [internal]
+    networks: [internal, edge]
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -63,10 +68,15 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-}"
     volumes: ["./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro", "./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro", "grafana-data:/var/lib/grafana"]
     restart: unless-stopped
-    networks: [internal]
+    networks: [internal, edge]
     depends_on: [prometheus, loki]
 
 networks:
+  # Docker does not activate published ports for a container that is attached
+  # only to `internal: true` networks (the binding is recorded in HostConfig
+  # but never applied, so `docker ps` shows no host port). Every service with
+  # `ports:` must also join a regular network such as `edge`; the loopback
+  # host_ip still keeps the port unreachable from outside the instance.
   internal:
     internal: true
   edge:
